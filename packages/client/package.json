@@ -1,0 +1,17 @@
+{
+  "name": "@local-to-pub/client",
+  "version": "0.0.1",
+  "private": true,
+  "bin": {
+    "tunnel": "./index.ts"
+  },
+  "scripts": {
+    "dev": "bun run index.ts",
+    "start": "bun run index.ts",
+    "test": "bun test"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
