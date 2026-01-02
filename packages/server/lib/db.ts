@@ -24,6 +24,18 @@ export function initDb(path: string = "tunnel.db"): TokenDb {
     )
   `);
 
+  // Migration: add subdomain column if it doesn't exist
+  try {
+    db.query("SELECT subdomain FROM tokens LIMIT 1").get();
+  } catch {
+    db.exec("ALTER TABLE tokens ADD COLUMN subdomain TEXT");
+    try {
+      db.exec("CREATE UNIQUE INDEX IF NOT EXISTS idx_tokens_subdomain ON tokens(subdomain)");
+    } catch {
+      // Index may already exist
+    }
+  }
+
   return db;
 }
 
