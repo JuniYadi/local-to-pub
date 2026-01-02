@@ -6,6 +6,7 @@ export type TokenDb = Database;
 export interface TokenRecord {
   id: number;
   token_hash: string;
+  subdomain: string | null;
   created_at: string;
   last_used_at: string | null;
 }
@@ -17,6 +18,7 @@ export function initDb(path: string = "tunnel.db"): TokenDb {
     CREATE TABLE IF NOT EXISTS tokens (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       token_hash TEXT NOT NULL UNIQUE,
+      subdomain TEXT UNIQUE,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_used_at DATETIME
     )
@@ -47,6 +49,36 @@ export function validateToken(db: TokenDb, token: string): TokenRecord | null {
   }
 
   return record;
+}
+
+export function listTokens(db: TokenDb): TokenRecord[] {
+  return db
+    .query("SELECT id, token_hash, subdomain, created_at, last_used_at FROM tokens ORDER BY id DESC")
+    .all() as TokenRecord[];
+}
+
+/**
+ * Updates or sets the persistent subdomain for a specific token.
+ * @param db The database instance
+ * @param id The token ID
+ * @param subdomain The subdomain to reserve (or null to clear)
+ * @returns boolean indicating success
+ */
+export function updateSubdomain(db: TokenDb, id: number, subdomain: string | null): boolean {
+  try {
+    const result = db
+      .query("UPDATE tokens SET subdomain = ? WHERE id = ?")
+      .run(subdomain, id);
+    return (result?.changes ?? 0) > 0;
+  } catch (e) {
+    // Likely a UNIQUE constraint violation if the subdomain is already taken
+    return false;
+  }
+}
+
+export function deleteToken(db: TokenDb, id: number): number {
+  const result = db.query("DELETE FROM tokens WHERE id = ?").run(id);
+  return result?.changes ?? 0;
 }
 
 function generateSecureToken(): string {

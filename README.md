@@ -34,8 +34,12 @@ bun run start --port 3000
 ## Generate Token
 
 ```bash
-curl -X POST http://your-server/api/tokens
+export ADMIN_USERNAME="admin"
+export ADMIN_PASSWORD="change-me"
+export ADMIN_SESSION_SECRET="long-random-string"
 ```
+
+Then open `http://your-server/`, log in, and generate a token.
 
 ## CLI Options
 
