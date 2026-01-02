@@ -1,0 +1,14 @@
+# Use a lightweight base image
+FROM debian:stable-slim
+
+# Set working directory
+WORKDIR /app
+
+# Copy the client binary
+COPY client-bin .
+
+# Set executable permission
+RUN chmod +x client-bin
+
+# Entrypoint to pass arguments to the binary
+ENTRYPOINT ["./client-bin"]

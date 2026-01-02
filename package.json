@@ -5,6 +5,8 @@
   "scripts": {
     "dev:server": "bun run --filter @local-to-pub/server dev",
     "dev:client": "bun run --filter @local-to-pub/client dev",
+    "build:server": "bun build ./packages/server/index.ts --compile --outfile server-bin",
+    "build:client": "bun build ./packages/client/index.ts --compile --outfile client-bin",
     "test": "bun test"
   }
 }
