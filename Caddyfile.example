@@ -3,7 +3,17 @@
     email your-email@example.com
 }
 
-*.example.com {
+# Main API
+your-domain.com {
+    tls {
+        dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+    }
+
+    reverse_proxy localhost:3000
+}
+
+# Tunnel Subdomain
+*.your-domain.com {
     tls {
         dns cloudflare {env.CLOUDFLARE_API_TOKEN}
     }
