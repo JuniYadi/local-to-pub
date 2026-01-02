@@ -154,8 +154,17 @@ function clearSessionCookie(): string {
 }
 
 async function buildFrontend() {
+  // Check if frontend entrypoint exists (it won't in a binary bundle)
+  const entrypointPath = Bun.fileURLToPath(FRONTEND_ENTRYPOINT);
+  const entrypointExists = await Bun.file(entrypointPath).exists();
+  if (!entrypointExists) {
+    frontendError = "Frontend source not available in binary. Build from source.";
+    console.log(frontendError);
+    return;
+  }
+
   const build = await Bun.build({
-    entrypoints: [Bun.fileURLToPath(FRONTEND_ENTRYPOINT)],
+    entrypoints: [entrypointPath],
     target: "browser",
     minify: Bun.env.NODE_ENV === "production",
   });
