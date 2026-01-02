@@ -9,6 +9,7 @@ import {
   serializeServerMessage,
   type RequestMessage,
 } from "./lib/protocol";
+import { embeddedFrontendJs, embeddedFrontendCss, embeddedFrontendHtml } from "./lib/embedded-frontend";
 
 // Configuration
 const PORT = Number(Bun.env.PORT) || 3000;
@@ -21,7 +22,15 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const SESSION_COOKIE = "admin_session";
 const FRONTEND_PREFIX = "/static/";
 const FRONTEND_ENTRYPOINT = new URL("./frontend.tsx", import.meta.url);
-const FRONTEND_HTML = Bun.file(new URL("./index.html", import.meta.url));
+
+// HTML content - use embedded version in binary, fall back to file read in dev
+let FRONTEND_HTML: string;
+if (embeddedFrontendHtml) {
+  FRONTEND_HTML = embeddedFrontendHtml.toString("utf-8");
+} else {
+  // Dev mode: read from filesystem
+  FRONTEND_HTML = await Bun.file(new URL("./index.html", import.meta.url)).text();
+}
 
 const frontendAssets = new Map<string, { blob: Blob; type: string }>();
 let frontendReady = false;
@@ -154,11 +163,20 @@ function clearSessionCookie(): string {
 }
 
 async function buildFrontend() {
-  // Check if frontend entrypoint exists (it won't in a binary bundle)
+  // Check for embedded frontend assets (from pre-built binary)
+  if (embeddedFrontendJs && embeddedFrontendCss) {
+    console.log("Using pre-built embedded frontend assets");
+    frontendAssets.set("frontend.js", { blob: new Blob([embeddedFrontendJs], { type: "application/javascript" }), type: "application/javascript" });
+    frontendAssets.set("frontend.css", { blob: new Blob([embeddedFrontendCss], { type: "text/css" }), type: "text/css" });
+    frontendReady = true;
+    return;
+  }
+
+  // Fallback: build from source
   const entrypointPath = Bun.fileURLToPath(FRONTEND_ENTRYPOINT);
   const entrypointExists = await Bun.file(entrypointPath).exists();
   if (!entrypointExists) {
-    frontendError = "Frontend source not available in binary. Build from source.";
+    frontendError = "Frontend source not available. Run 'bun run scripts/embed-frontend.ts' first.";
     console.log(frontendError);
     return;
   }
