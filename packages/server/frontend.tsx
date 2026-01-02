@@ -22,6 +22,15 @@ type InspectorEvent = {
   body?: string;
 };
 
+function shortHash(hash: string): string {
+  return hash.substring(0, 12) + "...";
+}
+
+function formatDate(dateStr: string | null): string {
+  if (!dateStr) return "Never";
+  return new Date(dateStr).toLocaleDateString() + " " + new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
 function Inspector() {
   const [events, setEvents] = useState<InspectorEvent[]>([]);
 
@@ -89,6 +98,7 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editingSubdomain, setEditingSubdomain] = useState<{id: number, value: string} | null>(null);
+  const [activeTab, setActiveTab] = useState<"tokens" | "inspector">("tokens");
 
   useEffect(() => {
     void loadSession();
@@ -198,6 +208,9 @@ function App() {
   }
 
   async function handleDeleteToken(id: number) {
+    if (!confirm("Are you sure you want to delete this token? This action cannot be undone.")) {
+      return;
+    }
     setBusy(true);
     setError(null);
     setNewToken(null);
@@ -340,71 +353,90 @@ function App() {
           <>
             <section className="panel">
               <div className="panel__header">
-                <h2>Tokens</h2>
-                <p>
-                  {`${tokens.length} active records (hashes only).`}
-                </p>
+                <h2>Tunnel Management</h2>
+                <p>Manage your tokens and monitor live traffic.</p>
+              </div>
+              <div className="tabs">
+                <button
+                  type="button"
+                  className={`tab ${activeTab === "tokens" ? "tab--active" : ""}`}
+                  onClick={() => setActiveTab("tokens")}
+                >
+                  Tokens
+                </button>
+                <button
+                  type="button"
+                  className={`tab ${activeTab === "inspector" ? "tab--active" : ""}`}
+                  onClick={() => setActiveTab("inspector")}
+                >
+                  Live Inspector
+                </button>
               </div>
               <div className="panel__body">
-                {tokens.length === 0 && <div className="empty">No tokens found.</div>}
-                {tokens.length > 0 && (
-                  <ul className="token-list">
-                    {tokens.map((token, index) => (
-                      <li key={token.id} style={{ animationDelay: `${index * 60}ms` }}>
-                        <div className="token-row">
-                          <div className="token-main">
-                            <div className="token-title">Token #{token.id}</div>
-                            <div className="token-hash">{shortHash(token.token_hash)}</div>
-                            <div className="token-subdomain">
-                              {editingSubdomain?.id === token.id ? (
-                                <div className="subdomain-edit">
-                                  <input
-                                    type="text"
-                                    value={editingSubdomain.value}
-                                    onChange={(e) => setEditingSubdomain({ id: token.id, value: e.target.value })}
-                                    placeholder="subdomain"
-                                  />
-                                  <button onClick={() => handleUpdateSubdomain(token.id, editingSubdomain.value)}>Save</button>
-                                  <button className="ghost" onClick={() => setEditingSubdomain(null)}>Cancel</button>
-                                </div>
-                              ) : (
-                                <div className="subdomain-display">
-                                  {token.subdomain ? (
-                                    <span className="badge badge--url">{token.subdomain}</span>
+                {activeTab === "tokens" ? (
+                  <>
+                    {tokens.length === 0 && <div className="empty">No tokens found.</div>}
+                    {tokens.length > 0 && (
+                      <ul className="token-list">
+                        {tokens.map((token, index) => (
+                          <li key={token.id} style={{ animationDelay: `${index * 60}ms` }}>
+                            <div className="token-row">
+                              <div className="token-main">
+                                <div className="token-title">Token #{token.id}</div>
+                                <div className="token-hash">{shortHash(token.token_hash)}</div>
+                                <div className="token-subdomain">
+                                  {editingSubdomain?.id === token.id ? (
+                                    <div className="subdomain-edit">
+                                      <input
+                                        type="text"
+                                        value={editingSubdomain.value}
+                                        onChange={(e) => setEditingSubdomain({ id: token.id, value: e.target.value })}
+                                        placeholder="subdomain"
+                                      />
+                                      <button onClick={() => handleUpdateSubdomain(token.id, editingSubdomain.value)}>Save</button>
+                                      <button className="ghost" onClick={() => setEditingSubdomain(null)}>Cancel</button>
+                                    </div>
                                   ) : (
-                                    <span className="badge">Random</span>
+                                    <div className="subdomain-display">
+                                      {token.subdomain ? (
+                                        <span className="badge badge--url">{token.subdomain}</span>
+                                      ) : (
+                                        <span className="badge">Random</span>
+                                      )}
+                                      <button className="ghost small" onClick={() => setEditingSubdomain({ id: token.id, value: token.subdomain || "" })}>
+                                        Edit
+                                      </button>
+                                    </div>
                                   )}
-                                  <button className="ghost small" onClick={() => setEditingSubdomain({ id: token.id, value: token.subdomain || "" })}>
-                                    Edit
-                                  </button>
                                 </div>
-                              )}
+                              </div>
+                              <div className="token-meta">
+                                <span>Created</span>
+                                <strong>{formatDate(token.created_at)}</strong>
+                              </div>
+                              <div className="token-meta">
+                                <span>Last used</span>
+                                <strong>{formatDate(token.last_used_at)}</strong>
+                              </div>
+                              <button
+                                type="button"
+                                className="ghost token-row__delete"
+                                onClick={() => void handleDeleteToken(token.id)}
+                                disabled={busy}
+                              >
+                                Delete
+                              </button>
                             </div>
-                          </div>
-                          <div className="token-meta">
-                            <span>Created</span>
-                            <strong>{formatDate(token.created_at)}</strong>
-                          </div>
-                          <div className="token-meta">
-                            <span>Last used</span>
-                            <strong>{formatDate(token.last_used_at)}</strong>
-                          </div>
-                          <button
-                            type="button"
-                            className="ghost token-row__delete"
-                            onClick={() => void handleDeleteToken(token.id)}
-                            disabled={busy}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </>
+                ) : (
+                  <Inspector />
                 )}
               </div>
             </section>
-            <Inspector />
           </>
         )}
       </main>
