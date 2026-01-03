@@ -4,6 +4,7 @@
 export interface AuthMessage {
   type: "auth";
   token: string;
+  requestedSubdomain?: string;
 }
 
 export interface ResponseMessage {
@@ -44,6 +45,10 @@ export function parseClientMessage(data: string): ClientMessage | null {
   try {
     const msg = JSON.parse(data);
     if (msg.type === "auth" && typeof msg.token === "string") {
+      // requestedSubdomain is optional
+      if (msg.requestedSubdomain !== undefined && typeof msg.requestedSubdomain !== "string") {
+        return null;
+      }
       return msg as AuthMessage;
     }
     if (msg.type === "response" && typeof msg.requestId === "string") {

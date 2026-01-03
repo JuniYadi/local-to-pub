@@ -6,6 +6,7 @@ export interface TunnelClientOptions {
   token: string;
   localHost: string;
   localPort: number;
+  requestedSubdomain?: string;
   onConnected?: (url: string) => void;
   onDisconnected?: () => void;
   onError?: (error: Error) => void;
@@ -36,10 +37,14 @@ export class TunnelClient {
       this.ws.onopen = () => {
         this.reconnectAttempts = 0;
         // Send auth message
-        this.ws?.send(JSON.stringify({
+        const authMessage: { type: string; token: string; requestedSubdomain?: string } = {
           type: "auth",
           token: this.options.token,
-        }));
+        };
+        if (this.options.requestedSubdomain) {
+          authMessage.requestedSubdomain = this.options.requestedSubdomain;
+        }
+        this.ws?.send(JSON.stringify(authMessage));
       };
 
       this.ws.onmessage = async (event) => {
