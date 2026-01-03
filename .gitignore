@@ -37,4 +37,5 @@ client-bin
 server-bin
 server-bundle
 tunnel.db
+tunnel-client
 docs/plans/
