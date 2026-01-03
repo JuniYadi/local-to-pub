@@ -11,6 +11,7 @@ const { values } = parseArgs({
     host: { type: "string", short: "h", default: "localhost" },
     server: { type: "string", short: "s" },
     token: { type: "string", short: "t" },
+    uri: { type: "string", short: "y" },
     help: { type: "boolean", default: false },
   },
   strict: true,
@@ -25,6 +26,7 @@ Options:
   -h, --host <host>     Local host to forward (default: localhost)
   -s, --server <url>    Server WebSocket URL (or set TUNNEL_SERVER)
   -t, --token <token>   Auth token (or set TUNNEL_TOKEN)
+  -y, --uri <subdomain> Request specific subdomain (optional)
   --help                Show this help message
 `);
   process.exit(0);
@@ -60,6 +62,7 @@ async function main() {
     token: config.token,
     localHost,
     localPort,
+    requestedSubdomain: values.uri,
     onConnected: (url) => {
       console.log(`\n✓ Tunnel active: ${url}`);
       console.log(`  → forwarding to ${localHost}:${localPort}\n`);
