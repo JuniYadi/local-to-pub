@@ -1,9 +1,9 @@
 // packages/server/index.ts
 import { EventEmitter } from "events";
-import { createToken, deleteToken, initDb, listTokens, validateToken, type TokenDb } from "./lib/db";
+import { createToken, deleteToken, initDb, listTokens, updateSubdomain, validateToken, type TokenDb } from "./lib/db";
 import { TunnelStore } from "./lib/redis";
 import { TunnelManager } from "./lib/tunnel-manager";
-import { generateSubdomain, extractSubdomain } from "./lib/subdomain";
+import { generateSubdomain, extractSubdomain, isValidSubdomain } from "./lib/subdomain";
 import {
   parseClientMessage,
   serializeServerMessage,
@@ -367,6 +367,20 @@ const server = Bun.serve<WebSocketData>({
         return Response.json({ ok: true });
       }
 
+      if (url.pathname === "/api/subdomain-check" && req.method === "GET") {
+        const uri = url.searchParams.get("uri");
+        if (!uri) {
+          return Response.json({ available: false, error: "Missing uri parameter" }, { status: 400 });
+        }
+
+        if (!isValidSubdomain(uri)) {
+          return Response.json({ available: false, error: "Invalid subdomain format", uri }, { status: 400 });
+        }
+
+        const isTaken = await tunnelStore.exists(uri) || tunnelManager.getConnection(uri);
+        return Response.json({ available: !isTaken, uri });
+      }
+
       if (url.pathname === "/api/inspector/stream" && req.method === "GET") {
         const configError = ensureAdminConfigured();
         if (configError) {
@@ -446,7 +460,7 @@ const server = Bun.serve<WebSocketData>({
     }
 
     // Forward request through WebSocket
-    const requestId = crypto.randomUUID();
+    const requestId = Bun.randomUUIDv7();
     const body = req.body ? Buffer.from(await req.arrayBuffer()).toString("base64") : "";
 
     const requestMsg: RequestMessage = {
@@ -522,7 +536,21 @@ const server = Bun.serve<WebSocketData>({
 
         // Determine subdomain
         let subdomain: string;
-        if (tokenRecord.subdomain) {
+        if (parsed.requestedSubdomain) {
+          // Client requested a specific subdomain
+          if (!isValidSubdomain(parsed.requestedSubdomain)) {
+            ws.send(serializeServerMessage({ type: "auth_error", message: "Invalid subdomain format" }));
+            ws.close();
+            return;
+          }
+          // Check if already in use
+          if (await tunnelStore.exists(parsed.requestedSubdomain) || tunnelManager.getConnection(parsed.requestedSubdomain)) {
+            ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
+            ws.close();
+            return;
+          }
+          subdomain = parsed.requestedSubdomain;
+        } else if (tokenRecord.subdomain) {
           subdomain = tokenRecord.subdomain;
           // Ensure it's not already in use by another connection
           if (tunnelManager.getConnection(subdomain)) {
