@@ -15,7 +15,7 @@
   "scripts": {
     "dev:server": "bun run --filter @local-to-pub/server dev",
     "dev:client": "bun run --filter @local-to-pub/client dev",
-    "build:server": "bun run scripts/embed-frontend.ts && bun build ./packages/server/index.ts --compile --outfile server-bin",
+    "build:server": "bash scripts/build-server.sh",
     "build:client": "bun build ./packages/client/index.ts --compile --outfile client-bin",
     "test": "bun test",
     "package": "bash scripts/package.sh",

@@ -120,10 +120,12 @@ jobs:
       - name: Build server
         if: matrix.binary == 'server'
         run: |
+          VERSION="${{ needs.version.outputs.version }}"
           bun run scripts/embed-frontend.ts
           bun build ./packages/server/index.ts \
             --compile \
             --target=${{ matrix.target }} \
+            --define VERSION="'${VERSION}'" \
             --outfile=local-to-pub-server
 
       - name: Build client
