@@ -69,30 +69,42 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux x64 - Server + Client
+          # Linux amd64 - Client
           - os: ubuntu-latest
-            arch: x64
+            platform: linux
+            arch: amd64
             target: bun-linux-x64
-            server: true
-            client: true
-          # Linux ARM64 - Server + Client
+            binary: client
+          # Linux amd64 - Server
           - os: ubuntu-latest
+            platform: linux
+            arch: amd64
+            target: bun-linux-x64
+            binary: server
+          # Linux arm64 - Client
+          - os: ubuntu-latest
+            platform: linux
             arch: arm64
             target: bun-linux-arm64
-            server: true
-            client: true
-          # macOS x64 (Intel) - Client only
+            binary: client
+          # Linux arm64 - Server
+          - os: ubuntu-latest
+            platform: linux
+            arch: arm64
+            target: bun-linux-arm64
+            binary: server
+          # macOS amd64 (Intel) - Client
           - os: macos-latest
-            arch: x64
+            platform: darwin
+            arch: amd64
             target: bun-darwin-x64
-            server: false
-            client: true
-          # macOS ARM64 (Apple Silicon) - Client only
+            binary: client
+          # macOS arm64 (Apple Silicon) - Client
           - os: macos-14
+            platform: darwin
             arch: arm64
             target: bun-darwin-arm64
-            server: false
-            client: true
+            binary: client
 
     runs-on: ${{ matrix.os }}
     steps:
@@ -105,9 +117,8 @@ jobs:
       - name: Install dependencies
         run: bun install
 
-      # Build server (Linux only - due to embedded frontend)
       - name: Build server
-        if: matrix.server == true
+        if: matrix.binary == 'server'
         run: |
           bun run scripts/embed-frontend.ts
           bun build ./packages/server/index.ts \
@@ -115,30 +126,21 @@ jobs:
             --target=${{ matrix.target }} \
             --outfile=local-to-pub-server
 
-      # Build client (all platforms)
       - name: Build client
+        if: matrix.binary == 'client'
         run: |
           bun build ./packages/client/index.ts \
             --compile \
             --target=${{ matrix.target }} \
             --outfile=local-to-pub-client
 
-      - name: Create platform directory
-        run: |
-          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
-
-          # Copy server if built
-          if [ -f local-to-pub-server ]; then
-            cp local-to-pub-server ${{ matrix.os }}-${{ matrix.arch }}/
-          fi
-
-          # Copy client
-          cp local-to-pub-client ${{ matrix.os }}-${{ matrix.arch }}/
-
-      - uses: actions/upload-artifact@v4
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}
-          path: ${{ matrix.os }}-${{ matrix.arch }}/
+          name: ${{ matrix.binary }}-${{ matrix.platform }}-${{ matrix.arch }}
+          path: |
+            local-to-pub-${{ matrix.binary }}
+          retention-days: 7
 
   release:
     needs: [version, build]
@@ -153,8 +155,8 @@ jobs:
         run: |
           cd artifacts
           for dir in */; do
-            PLATFORM=$(basename "$dir")
-            tar -czf "../local-to-pub-${PLATFORM}-${{ needs.version.outputs.version }}.tar.gz" -C "$dir" .
+            BINARY_DIR=$(basename "$dir")
+            tar -czf "../local-to-pub-${BINARY_DIR}-${{ needs.version.outputs.version }}.tar.gz" -C "$dir" .
           done
 
       - name: Calculate checksums
@@ -165,7 +167,7 @@ jobs:
           echo "Verify the integrity of downloaded files:" >> release-body.md
           echo "" >> release-body.md
           echo '```' >> release-body.md
-          find . -name "*.tar.gz" -exec shasum -a 256 {} \; >> release-body.md
+          find . -name "*.tar.gz" -exec shasum -a 256 {} \; | sort >> release-body.md
           echo '```' >> release-body.md
           echo "" >> release-body.md
           echo "To verify a downloaded file, run:" >> release-body.md
@@ -175,7 +177,7 @@ jobs:
           echo '```' >> release-body.md
 
           # Also create standalone checksums.txt file
-          find . -name "*.tar.gz" -exec shasum -a 256 {} \; > checksums.txt
+          find . -name "*.tar.gz" -exec shasum -a 256 {} \; | sort > checksums.txt
 
           # Output the body for next step
           echo "body<<EOF" >> $GITHUB_OUTPUT
