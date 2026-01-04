@@ -30,8 +30,7 @@
 ### Server (VPS)
 
 ```bash
-cd packages/server
-bun install && bun run start
+curl -s https://raw.githubusercontent.com/JuniYadi/local-to-pub/refs/heads/main/install.sh | bash -s -- --server
 ```
 
 Set required env vars:
@@ -45,8 +44,7 @@ export BASE_DOMAIN="tunnel.example.com"
 ### Client (Local)
 
 ```bash
-cd packages/client
-bun install
+curl -s https://raw.githubusercontent.com/JuniYadi/local-to-pub/refs/heads/main/install.sh | bash -s -- --client
 
 # Create config
 mkdir -p ~/.tunnel
