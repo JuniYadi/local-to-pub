@@ -1,15 +1,21 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
     inputs:
-      release:
-        description: "Create GitHub release"
-        type: boolean
-        default: true
+      version_type:
+        description: "Version bump type"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      prerelease:
+        description: "Pre-release identifier (e.g., alpha, beta, rc)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: write
@@ -18,18 +24,42 @@ jobs:
   version:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.bump.outputs.new_version }}
+      previous_version: ${{ steps.bump.outputs.previous_version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract version
-        id: version
+      - name: Bump version
+        id: bump
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          if [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
-            VERSION=$(node -p "require('./package.json').version")
+          CURRENT=$(node -p "require('./package.json').version")
+          echo "Previous version: $CURRENT" >> $GITHUB_STEP_SUMMARY
+
+          PRERELEASE="${{ github.event.inputs.prerelease }}"
+          TYPE="${{ github.event.inputs.version_type }}"
+
+          if [ -n "$PRERELEASE" ]; then
+            NEW_VERSION=$(npm version --no-git-tag-version $TYPE --preid=$PRERELEASE)
+          else
+            NEW_VERSION=$(npm version --no-git-tag-version $TYPE)
           fi
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+          # Remove 'v' prefix that npm adds
+          NEW_VERSION=${NEW_VERSION#v}
+
+          echo "New version: $NEW_VERSION" >> $GITHUB_STEP_SUMMARY
+          echo "previous_version=$CURRENT" >> $GITHUB_OUTPUT
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+
+      - name: Commit version bump
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json
+          git commit -m "chore: bump version to ${{ steps.bump.outputs.new_version }}"
+          git push
 
   build:
     needs: version
@@ -113,6 +143,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a v${{ needs.version.outputs.version }} -m "Release v${{ needs.version.outputs.version }}"
+          git push origin v${{ needs.version.outputs.version }}
 
       - name: Download all artifacts
         uses: actions/download-artifact@v4
