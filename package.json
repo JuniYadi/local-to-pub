@@ -2,15 +2,26 @@
   "name": "local-to-pub",
   "version": "0.0.0",
   "private": true,
+  "type": "module",
   "workspaces": [
     "packages/*"
   ],
+  "devDependencies": {
+    "eslint": "^9.0.0",
+    "prettier": "^3.0.0",
+    "@eslint/js": "^9.0.0",
+    "typescript-eslint": "^8.0.0"
+  },
   "scripts": {
     "dev:server": "bun run --filter @local-to-pub/server dev",
     "dev:client": "bun run --filter @local-to-pub/client dev",
     "build:server": "bun run scripts/embed-frontend.ts && bun build ./packages/server/index.ts --compile --outfile server-bin",
     "build:client": "bun build ./packages/client/index.ts --compile --outfile client-bin",
     "test": "bun test",
-    "package": "bash scripts/package.sh"
+    "package": "bash scripts/package.sh",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   }
 }
