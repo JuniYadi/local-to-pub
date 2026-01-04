@@ -1,7 +1,7 @@
 // packages/server/index.ts
 import { EventEmitter } from "events";
 import { createToken, deleteToken, initDb, listTokens, updateSubdomain, validateToken, type TokenDb,
-         initConnectionHistory, recordConnection, recordDisconnection, getLiveConnections, getPastConnections, type ConnectionRecord } from "./lib/db";
+         initConnectionHistory, recordConnection, recordDisconnection, getLiveConnections, getPastConnections } from "./lib/db";
 import { TunnelStore } from "./lib/redis";
 import { TunnelManager } from "./lib/tunnel-manager";
 import { generateSubdomain, extractSubdomain, isValidSubdomain } from "./lib/subdomain";
