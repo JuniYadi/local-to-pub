@@ -419,6 +419,47 @@ button.small {
   overflow-y: auto;
 }
 
+/* Connections Table Styles */
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  margin: 1.5rem 0 1rem;
+  color: var(--text);
+}
+
+.section-title:first-child {
+  margin-top: 0;
+}
+
+.connections-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.connections-table th,
+.connections-table td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.connections-table th {
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.75rem;
+}
+
+.connections-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.connections-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
 .event {
   padding: 10px 14px;
   border-radius: 10px;

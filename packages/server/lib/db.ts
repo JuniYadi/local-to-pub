@@ -93,6 +93,56 @@ export function deleteToken(db: TokenDb, id: number): number {
   return result?.changes ?? 0;
 }
 
+// Connection history tracking
+export interface ConnectionRecord {
+  id: number;
+  subdomain: string;
+  token_id: number;
+  connected_at: number;
+  disconnected_at: number | null;
+}
+
+export function initConnectionHistory(db: TokenDb): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS connection_history (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      subdomain TEXT NOT NULL,
+      token_id INTEGER NOT NULL,
+      connected_at INTEGER NOT NULL,
+      disconnected_at INTEGER,
+      FOREIGN KEY (token_id) REFERENCES tokens(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_connection_history_subdomain ON connection_history(subdomain)`);
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_connection_history_live ON connection_history(disconnected_at) WHERE disconnected_at IS NULL`);
+}
+
+export function recordConnection(db: TokenDb, subdomain: string, tokenId: number): number {
+  const result = db.query(
+    "INSERT INTO connection_history (subdomain, token_id, connected_at, disconnected_at) VALUES (?, ?, ?, NULL)"
+  ).run(subdomain, tokenId, Date.now());
+  return result.lastInsertRowId as number;
+}
+
+export function recordDisconnection(db: TokenDb, subdomain: string): void {
+  db.query(
+    "UPDATE connection_history SET disconnected_at = ? WHERE subdomain = ? AND disconnected_at IS NULL"
+  ).run(Date.now(), subdomain);
+}
+
+export function getLiveConnections(db: TokenDb): ConnectionRecord[] {
+  return db.query(
+    "SELECT * FROM connection_history WHERE disconnected_at IS NULL ORDER BY connected_at DESC"
+  ).all() as ConnectionRecord[];
+}
+
+export function getPastConnections(db: TokenDb, limit: number = 100): ConnectionRecord[] {
+  return db.query(
+    "SELECT * FROM connection_history WHERE disconnected_at IS NOT NULL ORDER BY disconnected_at DESC LIMIT ?"
+  ).all(limit) as ConnectionRecord[];
+}
+
 function generateSecureToken(): string {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);

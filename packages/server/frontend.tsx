@@ -10,6 +10,14 @@ type TokenRecord = {
   last_used_at: string | null;
 };
 
+type ConnectionRecord = {
+  id: number;
+  subdomain: string;
+  token_id: number;
+  connected_at: number;
+  disconnected_at: number | null;
+};
+
 type InspectorEvent = {
   requestId: string;
   subdomain: string;
@@ -29,6 +37,17 @@ function shortHash(hash: string): string {
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return "Never";
   return new Date(dateStr).toLocaleDateString() + " " + new Date(dateStr).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+function formatDuration(connectedAt: number, disconnectedAt: number | null): string {
+  const start = new Date(connectedAt);
+  const end = disconnectedAt ? new Date(disconnectedAt) : new Date();
+  const seconds = Math.floor((end.getTime() - start.getTime()) / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours}h ${minutes % 60}m`;
 }
 
 function Inspector() {
@@ -98,7 +117,8 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [editingSubdomain, setEditingSubdomain] = useState<{id: number, value: string} | null>(null);
-  const [activeTab, setActiveTab] = useState<"tokens" | "inspector">("tokens");
+  const [activeTab, setActiveTab] = useState<"tokens" | "inspector" | "connections">("tokens");
+  const [connections, setConnections] = useState<{live: ConnectionRecord[], past: ConnectionRecord[]}>({ live: [], past: [] });
 
   useEffect(() => {
     void loadSession();
@@ -143,6 +163,20 @@ function App() {
     }
   }
 
+  async function loadConnections() {
+    try {
+      const res = await fetch("/api/connections");
+      if (!res.ok) return;
+      const data = await res.json();
+      setConnections({
+        live: Array.isArray(data.live) ? data.live : [],
+        past: Array.isArray(data.past) ? data.past : [],
+      });
+    } catch {
+      console.error("Failed to load connections");
+    }
+  }
+
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -165,6 +199,7 @@ function App() {
       setPasswordInput("");
       setStatus("authed");
       await loadTokens();
+      await loadConnections();
     } catch {
       setError("Login failed. Please try again.");
     } finally {
@@ -200,6 +235,7 @@ function App() {
       const data = await res.json();
       setNewToken(data.token ?? null);
       await loadTokens();
+      await loadConnections();
     } catch {
       setError("Could not create token.");
     } finally {
@@ -245,6 +281,7 @@ function App() {
       }
       setEditingSubdomain(null);
       await loadTokens();
+      await loadConnections();
     } catch {
       setError("Update failed.");
     } finally {
@@ -371,6 +408,13 @@ function App() {
                 >
                   Live Inspector
                 </button>
+                <button
+                  type="button"
+                  className={`tab ${activeTab === "connections" ? "tab--active" : ""}`}
+                  onClick={() => setActiveTab("connections")}
+                >
+                  Connections
+                </button>
               </div>
               <div className="panel__body">
                 {activeTab === "tokens" ? (
@@ -432,9 +476,63 @@ function App() {
                       </ul>
                     )}
                   </>
-                ) : (
+                ) : activeTab === "inspector" ? (
                   <Inspector />
-                )}
+                ) : activeTab === "connections" ? (
+                  <>
+                    <h3 className="section-title">Live Connections ({connections.live.length})</h3>
+                    {connections.live.length === 0 && <div className="empty">No live connections.</div>}
+                    {connections.live.length > 0 && (
+                      <table className="connections-table">
+                        <thead>
+                          <tr>
+                            <th>Subdomain</th>
+                            <th>Token ID</th>
+                            <th>Connected</th>
+                            <th>Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {connections.live.map((conn) => (
+                            <tr key={conn.id}>
+                              <td><span className="badge badge--url">{conn.subdomain}</span></td>
+                              <td>#{conn.token_id}</td>
+                              <td>{formatDate(new Date(conn.connected_at).toISOString())}</td>
+                              <td>{formatDuration(conn.connected_at, null)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+
+                    <h3 className="section-title" style={{ marginTop: "2rem" }}>Past Connections ({connections.past.length})</h3>
+                    {connections.past.length === 0 && <div className="empty">No past connections.</div>}
+                    {connections.past.length > 0 && (
+                      <table className="connections-table">
+                        <thead>
+                          <tr>
+                            <th>Subdomain</th>
+                            <th>Token ID</th>
+                            <th>Connected</th>
+                            <th>Disconnected</th>
+                            <th>Duration</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {connections.past.map((conn) => (
+                            <tr key={conn.id}>
+                              <td><span className="badge badge--url">{conn.subdomain}</span></td>
+                              <td>#{conn.token_id}</td>
+                              <td>{formatDate(new Date(conn.connected_at).toISOString())}</td>
+                              <td>{formatDate(conn.disconnected_at ? new Date(conn.disconnected_at).toISOString() : null)}</td>
+                              <td>{formatDuration(conn.connected_at, conn.disconnected_at)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </>
+                ) : null}
               </div>
             </section>
           </>
