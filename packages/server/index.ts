@@ -395,13 +395,13 @@ const server = Bun.serve<WebSocketData>({
         return new Response(
           new ReadableStream({
             start(controller) {
-              const onEvent = (type: string, data: any) => {
+              const onEvent = (type: string, data: object) => {
                 const payload = JSON.stringify({ type, ...data });
                 controller.enqueue(`data: ${payload}\n\n`);
               };
 
-              const onRequest = (data: any) => onEvent("request", data);
-              const onResponse = (data: any) => onEvent("response", data);
+              const onRequest = (data: object) => onEvent("request", data);
+              const onResponse = (data: object) => onEvent("response", data);
 
               inspectorEvents.on("request", onRequest);
               inspectorEvents.on("response", onResponse);
