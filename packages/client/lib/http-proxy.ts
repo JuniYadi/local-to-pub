@@ -52,7 +52,7 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
       headers: responseHeaders,
       body: bodyBase64,
     };
-  } catch (error) {
+  } catch {
     return {
       status: 502,
       headers: { "Content-Type": "text/plain" },

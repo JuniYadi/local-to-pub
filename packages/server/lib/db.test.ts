@@ -1,6 +1,5 @@
 // packages/server/lib/db.test.ts
 import { describe, test, expect, beforeEach, afterEach } from "bun:test";
-import { Database } from "bun:sqlite";
 import { initDb, createToken, validateToken, type TokenDb } from "./db";
 
 describe("Token Database", () => {

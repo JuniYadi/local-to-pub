@@ -1,6 +1,6 @@
 // packages/server/integration.test.ts
 import { describe, test, expect, beforeAll, afterAll } from "bun:test";
-import { initDb, createToken } from "./lib/db";
+import { initDb, createToken, validateToken } from "./lib/db";
 
 describe("Integration", () => {
   let localServer: ReturnType<typeof Bun.serve>;
@@ -30,14 +30,12 @@ describe("Integration", () => {
   });
 
   test("token is created and validated", () => {
-    const { validateToken } = require("./lib/db");
     const result = validateToken(db, token);
     expect(result).not.toBeNull();
     expect(result.id).toBeGreaterThan(0);
   });
 
   test("invalid token returns null", () => {
-    const { validateToken } = require("./lib/db");
     const result = validateToken(db, "invalid-token");
     expect(result).toBeNull();
   });

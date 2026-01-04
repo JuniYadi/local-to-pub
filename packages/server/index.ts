@@ -230,7 +230,7 @@ await buildFrontend();
 const server = Bun.serve<WebSocketData>({
   port: PORT,
 
-  async fetch(req, server) {
+  async fetch(req, _server) {
     const url = new URL(req.url);
     const host = req.headers.get("host") || "";
 
@@ -395,13 +395,13 @@ const server = Bun.serve<WebSocketData>({
         return new Response(
           new ReadableStream({
             start(controller) {
-              const onEvent = (type: string, data: any) => {
+              const onEvent = (type: string, data: object) => {
                 const payload = JSON.stringify({ type, ...data });
                 controller.enqueue(`data: ${payload}\n\n`);
               };
 
-              const onRequest = (data: any) => onEvent("request", data);
-              const onResponse = (data: any) => onEvent("response", data);
+              const onRequest = (data: object) => onEvent("request", data);
+              const onResponse = (data: object) => onEvent("response", data);
 
               inspectorEvents.on("request", onRequest);
               inspectorEvents.on("response", onResponse);
@@ -502,13 +502,13 @@ const server = Bun.serve<WebSocketData>({
         status: response.status,
         headers: response.headers,
       });
-    } catch (error) {
+    } catch {
       return new Response("Gateway Timeout", { status: 504 });
     }
   },
 
   websocket: {
-    open(ws) {
+    open(_ws) {
       console.log("WebSocket connected, waiting for auth...");
     },
 
@@ -622,5 +622,5 @@ const server = Bun.serve<WebSocketData>({
   },
 });
 
-console.log(`Server running on http://localhost:${PORT}`);
+console.log(`Server running on http://${server.hostname}:${server.PORT}`);
 console.log(`Base domain: ${BASE_DOMAIN}`);

@@ -82,7 +82,7 @@ export function updateSubdomain(db: TokenDb, id: number, subdomain: string | nul
       .query("UPDATE tokens SET subdomain = ? WHERE id = ?")
       .run(subdomain, id);
     return (result?.changes ?? 0) > 0;
-  } catch (e) {
+  } catch {
     // Likely a UNIQUE constraint violation if the subdomain is already taken
     return false;
   }
