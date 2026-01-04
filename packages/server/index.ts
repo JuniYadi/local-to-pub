@@ -1,6 +1,7 @@
 // packages/server/index.ts
 import { EventEmitter } from "events";
-import { createToken, deleteToken, initDb, listTokens, updateSubdomain, validateToken, type TokenDb } from "./lib/db";
+import { createToken, deleteToken, initDb, listTokens, updateSubdomain, validateToken, type TokenDb,
+         initConnectionHistory, recordConnection, recordDisconnection, getLiveConnections, getPastConnections } from "./lib/db";
 import { TunnelStore } from "./lib/redis";
 import { TunnelManager } from "./lib/tunnel-manager";
 import { generateSubdomain, extractSubdomain, isValidSubdomain } from "./lib/subdomain";
@@ -23,6 +24,15 @@ const SESSION_COOKIE = "admin_session";
 const FRONTEND_PREFIX = "/static/";
 const FRONTEND_ENTRYPOINT = new URL("./frontend.tsx", import.meta.url);
 
+// Parse CLI arguments for --claim-subdomain flag
+let ALLOW_CUSTOM_SUBDOMAINS = (Bun.env.ALLOW_CUSTOM_SUBDOMAINS ?? "true") === "true";
+const cliArgs = process.argv.slice(2);
+const claimSubdomainArg = cliArgs.find(arg => arg.startsWith("--claim-subdomain="));
+if (claimSubdomainArg) {
+  const value = claimSubdomainArg.split("=")[1];
+  ALLOW_CUSTOM_SUBDOMAINS = value === "true";
+}
+
 // HTML content - use embedded version in binary, fall back to file read in dev
 let FRONTEND_HTML: string;
 if (embeddedFrontendHtml) {
@@ -38,6 +48,7 @@ let frontendError = "";
 
 // Initialize services
 const db: TokenDb = initDb();
+initConnectionHistory(db);
 const tunnelStore = new TunnelStore(REDIS_URL);
 const tunnelManager = new TunnelManager();
 const inspectorEvents = new EventEmitter();
@@ -423,6 +434,20 @@ const server = Bun.serve<WebSocketData>({
         );
       }
 
+      if (url.pathname === "/api/connections" && req.method === "GET") {
+        const configError = ensureAdminConfigured();
+        if (configError) {
+          return Response.json({ error: configError }, { status: 500 });
+        }
+        const session = getSession(req);
+        if (!session) {
+          return Response.json({ error: "Unauthorized." }, { status: 401 });
+        }
+        const live = getLiveConnections(db);
+        const past = getPastConnections(db);
+        return Response.json({ live, past });
+      }
+
       const deleteTokenMatch = url.pathname.match(/^\/api\/tokens\/(\d+)$/);
       if (req.method === "DELETE" && deleteTokenMatch) {
         const configError = ensureAdminConfigured();
@@ -537,6 +562,15 @@ const server = Bun.serve<WebSocketData>({
         // Determine subdomain
         let subdomain: string;
         if (parsed.requestedSubdomain) {
+          // Client requested a specific subdomain - check if allowed
+          if (!ALLOW_CUSTOM_SUBDOMAINS) {
+            ws.send(serializeServerMessage({
+              type: "auth_error",
+              message: "Custom subdomain requests are disabled on this server. Please reconnect without the --uri flag, or configure a persistent subdomain for your token."
+            }));
+            ws.close();
+            return;
+          }
           // Client requested a specific subdomain
           if (!isValidSubdomain(parsed.requestedSubdomain)) {
             ws.send(serializeServerMessage({ type: "auth_error", message: "Invalid subdomain format" }));
@@ -595,6 +629,9 @@ const server = Bun.serve<WebSocketData>({
           url,
         }));
 
+        // Record connection in history
+        recordConnection(db, subdomain, tokenRecord.id);
+
         console.log(`Tunnel registered: ${subdomain}`);
       }
 
@@ -614,6 +651,8 @@ const server = Bun.serve<WebSocketData>({
     async close(ws) {
       const data = ws.data;
       if (data.subdomain) {
+        // Record disconnection in history
+        recordDisconnection(db, data.subdomain);
         await tunnelStore.unregister(data.subdomain);
         tunnelManager.unregisterConnection(data.subdomain);
         console.log(`Tunnel disconnected: ${data.subdomain}`);
