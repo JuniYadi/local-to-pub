@@ -1,0 +1,138 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Create GitHub release"
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      is_release: ${{ steps.version.outputs.is_release }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          IS_RELEASE=${{ github.event.inputs.release == 'true' && 'true' || 'false' }}
+          echo "is_release=$IS_RELEASE" >> $GITHUB_OUTPUT
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: x64
+            target: bun-linux-x64
+            server: true
+            client: true
+          - os: ubuntu-latest
+            arch: arm64
+            target: bun-linux-arm64
+            server: true
+            client: true
+          - os: macos-latest
+            arch: x64
+            target: bun-darwin-x64
+            server: false
+            client: true
+          - os: macos-14
+            arch: arm64
+            target: bun-darwin-arm64
+            server: false
+            client: true
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # Build server (Linux only)
+      - name: Build server
+        if: matrix.server == true
+        run: |
+          bun run scripts/embed-frontend.ts
+          bun build ./packages/server/index.ts \
+            --compile \
+            --target=${{ matrix.target }} \
+            --outfile=local-to-pub-server-${{ matrix.os }}-${{ matrix.arch }}
+
+      # Build client (all platforms)
+      - name: Build client
+        run: |
+          bun build ./packages/client/index.ts \
+            --compile \
+            --target=${{ matrix.target }} \
+            --outfile=local-to-pub-client-${{ matrix.os }}-${{ matrix.arch }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            local-to-pub-server-${{ matrix.os }}-${{ matrix.arch }}
+            local-to-pub-client-${{ matrix.os }}-${{ matrix.arch }}
+          retention-days: 7
+
+  release:
+    needs: [version, build]
+    if: needs.version.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package releases
+        run: |
+          cd artifacts
+          for dir in */; do
+            PLATFORM=$(basename "$dir")
+            tar -czf "../local-to-pub-${PLATFORM}-${{ needs.version.outputs.version }}.tar.gz" -C "$dir" .
+          done
+
+      - name: Calculate checksums
+        run: |
+          cd ..
+          find . -name "*.tar.gz" -exec shasum -a 256 {} \; > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ needs.version.outputs.version }}
+          tag_name: v${{ needs.version.outputs.version }}
+          draft: false
+          prerelease: false
+          files: |
+            *.tar.gz
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
