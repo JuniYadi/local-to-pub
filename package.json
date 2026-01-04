@@ -1,7 +1,10 @@
 {
   "name": "local-to-pub",
+  "version": "0.0.0",
   "private": true,
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "dev:server": "bun run --filter @local-to-pub/server dev",
     "dev:client": "bun run --filter @local-to-pub/client dev",
