@@ -1,6 +1,12 @@
 // packages/server/lib/tunnel-manager.test.ts
 import { describe, test, expect, beforeEach, mock } from "bun:test";
+import type { ServerWebSocket } from "bun";
 import { TunnelManager } from "./tunnel-manager";
+
+// Mock WebSocket interface for tests
+interface MockWebSocket {
+  send: ReturnType<typeof mock>;
+}
 
 describe("TunnelManager", () => {
   let manager: TunnelManager;
@@ -10,14 +16,14 @@ describe("TunnelManager", () => {
   });
 
   test("registerConnection stores WebSocket by subdomain", () => {
-    const mockWs = { send: mock(() => {}) } as any;
+    const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
     manager.registerConnection("abc123", mockWs);
 
     expect(manager.getConnection("abc123")).toBe(mockWs);
   });
 
   test("unregisterConnection removes WebSocket", () => {
-    const mockWs = { send: mock(() => {}) } as any;
+    const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
     manager.registerConnection("abc123", mockWs);
     manager.unregisterConnection("abc123");
 
@@ -29,7 +35,7 @@ describe("TunnelManager", () => {
   });
 
   test("waitForResponse and resolvePendingRequest work together", async () => {
-    const mockWs = { send: mock(() => {}) } as any;
+    const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
     manager.registerConnection("abc123", mockWs);
 
     const requestId = crypto.randomUUID();
