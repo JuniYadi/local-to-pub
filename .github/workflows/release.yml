@@ -1,0 +1,166 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Create GitHub release"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          if [ "$VERSION" = "$GITHUB_REF_NAME" ]; then
+            VERSION=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x64 - Server + Client
+          - os: ubuntu-latest
+            arch: x64
+            target: bun-linux-x64
+            server: true
+            client: true
+          # Linux ARM64 - Server + Client
+          - os: ubuntu-latest
+            arch: arm64
+            target: bun-linux-arm64
+            server: true
+            client: true
+          # macOS x64 (Intel) - Client only
+          - os: macos-latest
+            arch: x64
+            target: bun-darwin-x64
+            server: false
+            client: true
+          # macOS ARM64 (Apple Silicon) - Client only
+          - os: macos-14
+            arch: arm64
+            target: bun-darwin-arm64
+            server: false
+            client: true
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install
+
+      # Build server (Linux only - due to embedded frontend)
+      - name: Build server
+        if: matrix.server == true
+        run: |
+          bun run scripts/embed-frontend.ts
+          bun build ./packages/server/index.ts \
+            --compile \
+            --target=${{ matrix.target }} \
+            --outfile=local-to-pub-server
+
+      # Build client (all platforms)
+      - name: Build client
+        run: |
+          bun build ./packages/client/index.ts \
+            --compile \
+            --target=${{ matrix.target }} \
+            --outfile=local-to-pub-client
+
+      - name: Create platform directory
+        run: |
+          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
+
+          # Copy server if built
+          if [ -f local-to-pub-server ]; then
+            cp local-to-pub-server ${{ matrix.os }}-${{ matrix.arch }}/
+          fi
+
+          # Copy client
+          cp local-to-pub-client ${{ matrix.os }}-${{ matrix.arch }}/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.os }}-${{ matrix.arch }}
+          path: ${{ matrix.os }}-${{ matrix.arch }}/
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Package releases
+        run: |
+          cd artifacts
+          for dir in */; do
+            PLATFORM=$(basename "$dir")
+            tar -czf "../local-to-pub-${PLATFORM}-${{ needs.version.outputs.version }}.tar.gz" -C "$dir" .
+          done
+
+      - name: Calculate checksums
+        id: checksums
+        run: |
+          echo "## 📦 Checksums" > release-body.md
+          echo "" >> release-body.md
+          echo "Verify the integrity of downloaded files:" >> release-body.md
+          echo "" >> release-body.md
+          echo '```' >> release-body.md
+          find . -name "*.tar.gz" -exec shasum -a 256 {} \; >> release-body.md
+          echo '```' >> release-body.md
+          echo "" >> release-body.md
+          echo "To verify a downloaded file, run:" >> release-body.md
+          echo "" >> release-body.md
+          echo '```bash' >> release-body.md
+          echo "shasum -a 256 <downloaded-file> | grep -q \$(cat checksums.txt | grep <downloaded-file> | awk '{print \$1}')" >> release-body.md
+          echo '```' >> release-body.md
+
+          # Also create standalone checksums.txt file
+          find . -name "*.tar.gz" -exec shasum -a 256 {} \; > checksums.txt
+
+          # Output the body for next step
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat release-body.md >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: v${{ needs.version.outputs.version }}
+          body: ${{ steps.checksums.outputs.body }}
+          draft: false
+          prerelease: false
+          files: |
+            *.tar.gz
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
