@@ -2,6 +2,25 @@
 
 Choose the right binary for your system and follow the installation steps below.
 
+## Table of Contents
+
+- [Client Installation](#client-installation)
+  - [Linux (AMD64/Intel)](#linux-amd64intel)
+  - [Linux (ARM64)](#linux-arm64)
+  - [macOS (Apple Silicon)](#macos-apple-silicon---m1m2m3)
+  - [macOS (Intel)](#macos-intel)
+- [Server Installation](#server-installation)
+  - [Linux (AMD64/Intel)](#linux-amd64intel-1)
+  - [Linux (ARM64)](#linux-arm64-1)
+- [Verify Download](#verify-download-recommended)
+- [Version-Specific Install](#version-specific-install)
+- [What's Included](#whats-included)
+- [System Requirements](#system-requirements)
+- [Next Steps](#next-steps)
+- [Troubleshooting](#troubleshooting)
+
+---
+
 ## Client Installation
 
 The client is used to create tunnels from your local machine to a local-to-pub server.
