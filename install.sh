@@ -14,6 +14,7 @@ BASE_URL="https://github.com/${REPO}/releases"
 
 # Parse arguments
 BINARY_TYPE=""
+GLOBAL_INSTALL=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --client)
@@ -24,6 +25,10 @@ while [[ $# -gt 0 ]]; do
       BINARY_TYPE="server"
       shift
       ;;
+    --global)
+      GLOBAL_INSTALL=true
+      shift
+      ;;
     -h|--help)
       echo "Usage: $0 [OPTION]"
       echo ""
@@ -32,11 +37,14 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --client    Install the client binary (default)"
       echo "  --server    Install the server binary"
+      echo "  --global    Install to system-wide directory (/usr/local/bin)"
+      echo "              (default: user-local ~/.local/bin, no sudo required)"
       echo "  -h, --help  Show this help message"
       echo ""
       echo "Examples:"
-      echo "  $0 --client    # Install or update client"
-      echo "  $0 --server    # Install or update server"
+      echo "  $0 --client       # Install or update client to ~/.local/bin"
+      echo "  $0 --server       # Install or update server to ~/.local/bin"
+      echo "  $0 --client --global  # Install client to /usr/local/bin (requires sudo)"
       exit 0
       ;;
     *)
@@ -121,8 +129,19 @@ get_latest_version() {
 
 LATEST_VERSION=$(get_latest_version)
 
-# Check if binary already exists
-INSTALL_DIR="/usr/local/bin"
+# Determine install directory
+if [[ "$GLOBAL_INSTALL" == true ]]; then
+  INSTALL_DIR="/usr/local/bin"
+  USE_SUDO=true
+else
+  INSTALL_DIR="${HOME}/.local/bin"
+  USE_SUDO=false
+  # Create user-local bin directory if it doesn't exist
+  if [[ ! -d "$INSTALL_DIR" ]]; then
+    mkdir -p "$INSTALL_DIR"
+  fi
+fi
+
 BINARY_PATH="${INSTALL_DIR}/${BINARY_NAME}"
 CURRENT_VERSION=""
 
@@ -174,14 +193,26 @@ chmod +x "$BINARY_NAME"
 
 # Install
 echo ""
-if [[ -f "$BINARY_PATH" ]]; then
-  echo -e "${YELLOW}Updating existing installation...${NC}"
-  sudo cp "$BINARY_NAME" "$BINARY_PATH"
-  sudo chmod +x "$BINARY_PATH"
+if [[ "$USE_SUDO" == true ]]; then
+  if [[ -f "$BINARY_PATH" ]]; then
+    echo -e "${YELLOW}Updating existing installation...${NC}"
+    sudo cp "$BINARY_NAME" "$BINARY_PATH"
+    sudo chmod +x "$BINARY_PATH"
+  else
+    echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
+    sudo cp "$BINARY_NAME" "$BINARY_PATH"
+    sudo chmod +x "$BINARY_PATH"
+  fi
 else
-  echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
-  sudo cp "$BINARY_NAME" "$BINARY_PATH"
-  sudo chmod +x "$BINARY_PATH"
+  if [[ -f "$BINARY_PATH" ]]; then
+    echo -e "${YELLOW}Updating existing installation...${NC}"
+    cp "$BINARY_NAME" "$BINARY_PATH"
+    chmod +x "$BINARY_PATH"
+  else
+    echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
+    cp "$BINARY_NAME" "$BINARY_PATH"
+    chmod +x "$BINARY_PATH"
+  fi
 fi
 
 # Verify installation
@@ -195,6 +226,20 @@ echo -e "${GREEN}✓ Successfully ${CURRENT_VERSION:+updated }installed ${BINARY
 echo ""
 echo -e "Binary installed at: ${BLUE}${BINARY_PATH}${NC}"
 echo ""
+
+# Show PATH warning for user-local installs
+if [[ "$USE_SUDO" == false ]]; then
+  # Check if ~/.local/bin is in PATH
+  if [[ ":$PATH:" != *":${HOME}/.local/bin:"* ]]; then
+    echo -e "${YELLOW}⚠ Warning: ${INSTALL_DIR} is not in your PATH${NC}"
+    echo ""
+    echo -e "To use ${BINARY_NAME} without specifying the full path, add the following to your ~/.bashrc or ~/.zshrc:"
+    echo -e "${GREEN}  export PATH=\"\$HOME/.local/bin:\$PATH\"${NC}"
+    echo ""
+    echo -e "Then run: ${GREEN}source ~/.bashrc${NC} (or ~/.zshrc)"
+    echo ""
+  fi
+fi
 
 # Show next steps
 if [[ "$BINARY_TYPE" == "client" ]]; then
