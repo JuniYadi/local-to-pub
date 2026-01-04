@@ -51,7 +51,7 @@ export class TunnelManager {
     return this.connections.has(subdomain);
   }
 
-  createPendingRequest(subdomain: string): string {
+  createPendingRequest(_subdomain: string): string {
     const requestId = crypto.randomUUID();
     return requestId;
   }

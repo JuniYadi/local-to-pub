@@ -230,7 +230,7 @@ await buildFrontend();
 const server = Bun.serve<WebSocketData>({
   port: PORT,
 
-  async fetch(req, server) {
+  async fetch(req, _server) {
     const url = new URL(req.url);
     const host = req.headers.get("host") || "";
 
@@ -502,13 +502,13 @@ const server = Bun.serve<WebSocketData>({
         status: response.status,
         headers: response.headers,
       });
-    } catch (error) {
+    } catch {
       return new Response("Gateway Timeout", { status: 504 });
     }
   },
 
   websocket: {
-    open(ws) {
+    open(_ws) {
       console.log("WebSocket connected, waiting for auth...");
     },
 

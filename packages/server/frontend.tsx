@@ -41,8 +41,8 @@ function Inspector() {
       try {
         const data = JSON.parse(event.data) as InspectorEvent;
         setEvents((prev) => [data, ...prev].slice(0, 50));
-      } catch (err) {
-        console.error("Failed to parse inspector event", err);
+      } catch {
+        console.error("Failed to parse inspector event");
       }
     };
 
@@ -121,7 +121,7 @@ function App() {
       setCurrentUser(data.username ?? "");
       setStatus("authed");
       await loadTokens();
-    } catch (err) {
+    } catch {
       setError("Could not reach the server.");
       setStatus("guest");
     }
@@ -138,7 +138,7 @@ function App() {
       }
       const data = await res.json();
       setTokens(Array.isArray(data.tokens) ? data.tokens : []);
-    } catch (err) {
+    } catch {
       setError("Unable to load tokens.");
     }
   }
@@ -165,7 +165,7 @@ function App() {
       setPasswordInput("");
       setStatus("authed");
       await loadTokens();
-    } catch (err) {
+    } catch {
       setError("Login failed. Please try again.");
     } finally {
       setBusy(false);
@@ -200,7 +200,7 @@ function App() {
       const data = await res.json();
       setNewToken(data.token ?? null);
       await loadTokens();
-    } catch (err) {
+    } catch {
       setError("Could not create token.");
     } finally {
       setBusy(false);
@@ -222,7 +222,7 @@ function App() {
         return;
       }
       await loadTokens();
-    } catch (err) {
+    } catch {
       setError("Token delete failed.");
     } finally {
       setBusy(false);
@@ -245,7 +245,7 @@ function App() {
       }
       setEditingSubdomain(null);
       await loadTokens();
-    } catch (err) {
+    } catch {
       setError("Update failed.");
     } finally {
       setBusy(false);
@@ -256,7 +256,7 @@ function App() {
     if (!newToken) return;
     try {
       await navigator.clipboard.writeText(newToken);
-    } catch (err) {
+    } catch {
       setError("Copy failed. Please copy manually.");
     }
   }
