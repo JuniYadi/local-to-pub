@@ -622,5 +622,5 @@ const server = Bun.serve<WebSocketData>({
   },
 });
 
-console.log(`Server running on http://localhost:${PORT}`);
+console.log(`Server running on http://${server.hostname}:${server.PORT}`);
 console.log(`Base domain: ${BASE_DOMAIN}`);
