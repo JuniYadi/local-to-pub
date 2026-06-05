@@ -62,9 +62,11 @@ fi
 
 if [[ "$BINARY_TYPE" == "client" ]]; then
   BINARY_NAME="local-to-pub"
+  OLD_BINARY_NAME="local-to-pub-client"
   ALIAS_NAME="ltp"
 else
   BINARY_NAME="local-to-pub-server"
+  OLD_BINARY_NAME=""
   ALIAS_NAME=""
 fi
 
@@ -188,25 +190,35 @@ fi
 cd "$TMP_DIR"
 tar -xzf "${FILENAME}"
 
+# The binary filename in the downloaded archive is always 'local-to-pub' for client
+# and 'local-to-pub-server' for server
+if [[ "$BINARY_TYPE" == "client" ]]; then
+  EXTRACTED_BINARY="local-to-pub"
+else
+  EXTRACTED_BINARY="local-to-pub-server"
+fi
+
 # Verify binary exists
-if [[ ! -f "$BINARY_NAME" ]]; then
-  echo -e "${RED}Error: Binary not found in archive${NC}"
+if [[ ! -f "$EXTRACTED_BINARY" ]]; then
+  echo -e "${RED}Error: Binary '${EXTRACTED_BINARY}' not found in archive${NC}"
+  echo "Archive contents:"
+  ls -la
   exit 1
 fi
 
 # Make executable
-chmod +x "$BINARY_NAME"
+chmod +x "$EXTRACTED_BINARY"
 
 # Install
 echo ""
 if [[ "$USE_SUDO" == true ]]; then
   echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
   # Remove old binary name if it exists
-  if [[ "$BINARY_TYPE" == "client" && -f "${INSTALL_DIR}/local-to-pub-client" ]]; then
-    echo -e "${YELLOW}Removing old binary: local-to-pub-client${NC}"
-    sudo rm "${INSTALL_DIR}/local-to-pub-client"
+  if [[ -n "$OLD_BINARY_NAME" && -f "${INSTALL_DIR}/${OLD_BINARY_NAME}" ]]; then
+    echo -e "${YELLOW}Removing old binary: ${OLD_BINARY_NAME}${NC}"
+    sudo rm "${INSTALL_DIR}/${OLD_BINARY_NAME}"
   fi
-  sudo cp "$BINARY_NAME" "$BINARY_PATH"
+  sudo cp "$EXTRACTED_BINARY" "$BINARY_PATH"
   sudo chmod +x "$BINARY_PATH"
   if [[ -n "$ALIAS_NAME" ]]; then
     sudo ln -sf "$BINARY_PATH" "${INSTALL_DIR}/${ALIAS_NAME}"
@@ -214,11 +226,11 @@ if [[ "$USE_SUDO" == true ]]; then
 else
   echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
   # Remove old binary name if it exists
-  if [[ "$BINARY_TYPE" == "client" && -f "${INSTALL_DIR}/local-to-pub-client" ]]; then
-    echo -e "${YELLOW}Removing old binary: local-to-pub-client${NC}"
-    rm "${INSTALL_DIR}/local-to-pub-client"
+  if [[ -n "$OLD_BINARY_NAME" && -f "${INSTALL_DIR}/${OLD_BINARY_NAME}" ]]; then
+    echo -e "${YELLOW}Removing old binary: ${OLD_BINARY_NAME}${NC}"
+    rm "${INSTALL_DIR}/${OLD_BINARY_NAME}"
   fi
-  cp "$BINARY_NAME" "$BINARY_PATH"
+  cp "$EXTRACTED_BINARY" "$BINARY_PATH"
   chmod +x "$BINARY_PATH"
   if [[ -n "$ALIAS_NAME" ]]; then
     ln -sf "$BINARY_PATH" "${INSTALL_DIR}/${ALIAS_NAME}"
