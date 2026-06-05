@@ -190,17 +190,12 @@ fi
 cd "$TMP_DIR"
 tar -xzf "${FILENAME}"
 
-# The binary filename in the downloaded archive is always 'local-to-pub' for client
-# and 'local-to-pub-server' for server
-if [[ "$BINARY_TYPE" == "client" ]]; then
-  EXTRACTED_BINARY="local-to-pub"
-else
-  EXTRACTED_BINARY="local-to-pub-server"
-fi
+# Find the binary in the extracted files
+# We look for a file starting with local-to-pub
+EXTRACTED_BINARY=$(find . -maxdepth 1 -type f -name "local-to-pub*" | head -n 1 | sed 's|^\./||')
 
-# Verify binary exists
-if [[ ! -f "$EXTRACTED_BINARY" ]]; then
-  echo -e "${RED}Error: Binary '${EXTRACTED_BINARY}' not found in archive${NC}"
+if [[ -z "$EXTRACTED_BINARY" ]]; then
+  echo -e "${RED}Error: Binary not found in archive${NC}"
   echo "Archive contents:"
   ls -la
   exit 1
