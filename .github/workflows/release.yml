@@ -89,22 +89,23 @@ jobs:
             --compile \
             --target=${{ matrix.target }} \
             --define VERSION="'${VERSION}'" \
-            --outfile=local-to-pub-server-${{ matrix.platform }}-${{ matrix.arch }}
+            --outfile=local-to-pub-server
 
       - name: Build client
         if: matrix.binary == 'client'
         run: |
+          VERSION="${{ needs.version.outputs.version }}"
           bun build ./packages/client/index.ts \
             --compile \
             --target=${{ matrix.target }} \
-            --outfile=local-to-pub-client-${{ matrix.platform }}-${{ matrix.arch }}
+            --outfile=local-to-pub
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            local-to-pub-${{ matrix.binary }}-${{ matrix.platform }}-${{ matrix.arch }}
+            local-to-pub*
           retention-days: 7
 
   release:

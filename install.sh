@@ -190,14 +190,14 @@ fi
 cd "$TMP_DIR"
 tar -xzf "${FILENAME}"
 
+# Remove the archive file to ensure 'find' doesn't pick it up
+rm "${FILENAME}"
+
 # Find the binary in the extracted files
-# We look for a file starting with local-to-pub and exclude the archive itself
-EXTRACTED_BINARY=$(find . -maxdepth 1 -type f -name "local-to-pub*" ! -name "*.tar.gz" | head -n 1 | sed 's|^\./||')
+EXTRACTED_BINARY=$(find . -maxdepth 1 -type f -name "local-to-pub*" | head -n 1 | sed 's|^\./||')
 
 if [[ -z "$EXTRACTED_BINARY" ]]; then
   echo -e "${RED}Error: Binary not found in archive${NC}"
-  echo "Archive contents:"
-  ls -la
   exit 1
 fi
 
