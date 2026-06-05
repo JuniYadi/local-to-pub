@@ -6,6 +6,7 @@ export interface ProxyRequest {
   path: string;
   headers: Record<string, string>;
   body: string; // base64
+  hostHeader?: string;
 }
 
 export interface ProxyResponse {
@@ -17,17 +18,24 @@ export interface ProxyResponse {
 export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
   const url = `http://${req.host}:${req.port}${req.path}`;
 
-  // Filter out hop-by-hop headers
+  // Filter out hop-by-hop and encoding headers
   const headers = new Headers();
-  const skipHeaders = new Set([
+  const skipRequestHeaders = new Set([
     "host", "connection", "keep-alive", "transfer-encoding",
     "upgrade", "proxy-connection", "proxy-authenticate", "proxy-authorization",
   ]);
 
   for (const [key, value] of Object.entries(req.headers)) {
-    if (!skipHeaders.has(key.toLowerCase())) {
+    if (!skipRequestHeaders.has(key.toLowerCase())) {
       headers.set(key, value);
     }
+  }
+
+  // Set Host header if overridden
+  if (req.hostHeader) {
+    headers.set("host", req.hostHeader);
+  } else {
+    headers.set("host", `${req.host}:${req.port}`);
   }
 
   try {
@@ -38,8 +46,14 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
     });
 
     const responseHeaders: Record<string, string> = {};
+    const skipResponseHeaders = new Set([
+      "connection", "keep-alive", "transfer-encoding",
+      "upgrade", "proxy-connection", "proxy-authenticate", "proxy-authorization",
+      "content-encoding", "content-length"
+    ]);
+
     response.headers.forEach((value, key) => {
-      if (!skipHeaders.has(key.toLowerCase())) {
+      if (!skipResponseHeaders.has(key.toLowerCase())) {
         responseHeaders[key] = value;
       }
     });

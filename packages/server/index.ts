@@ -240,6 +240,7 @@ await buildFrontend();
 
 const server = Bun.serve<WebSocketData>({
   port: PORT,
+  idleTimeout: 60, // 60 seconds
 
   async fetch(req, _server) {
     const url = new URL(req.url);
@@ -661,5 +662,5 @@ const server = Bun.serve<WebSocketData>({
   },
 });
 
-console.log(`Server running on http://${server.hostname}:${server.PORT}`);
+console.log(`Server running on http://${server.hostname}:${server.port}`);
 console.log(`Base domain: ${BASE_DOMAIN}`);

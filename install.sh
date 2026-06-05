@@ -60,7 +60,13 @@ if [[ -z "$BINARY_TYPE" ]]; then
   BINARY_TYPE="client"
 fi
 
-BINARY_NAME="local-to-pub-${BINARY_TYPE}"
+if [[ "$BINARY_TYPE" == "client" ]]; then
+  BINARY_NAME="local-to-pub"
+  ALIAS_NAME="ltp"
+else
+  BINARY_NAME="local-to-pub-server"
+  ALIAS_NAME=""
+fi
 
 echo -e "${BLUE}local-to-pub Installer${NC}"
 echo ""
@@ -194,24 +200,28 @@ chmod +x "$BINARY_NAME"
 # Install
 echo ""
 if [[ "$USE_SUDO" == true ]]; then
-  if [[ -f "$BINARY_PATH" ]]; then
-    echo -e "${YELLOW}Updating existing installation...${NC}"
-    sudo cp "$BINARY_NAME" "$BINARY_PATH"
-    sudo chmod +x "$BINARY_PATH"
-  else
-    echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
-    sudo cp "$BINARY_NAME" "$BINARY_PATH"
-    sudo chmod +x "$BINARY_PATH"
+  echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
+  # Remove old binary name if it exists
+  if [[ "$BINARY_TYPE" == "client" && -f "${INSTALL_DIR}/local-to-pub-client" ]]; then
+    echo -e "${YELLOW}Removing old binary: local-to-pub-client${NC}"
+    sudo rm "${INSTALL_DIR}/local-to-pub-client"
+  fi
+  sudo cp "$BINARY_NAME" "$BINARY_PATH"
+  sudo chmod +x "$BINARY_PATH"
+  if [[ -n "$ALIAS_NAME" ]]; then
+    sudo ln -sf "$BINARY_PATH" "${INSTALL_DIR}/${ALIAS_NAME}"
   fi
 else
-  if [[ -f "$BINARY_PATH" ]]; then
-    echo -e "${YELLOW}Updating existing installation...${NC}"
-    cp "$BINARY_NAME" "$BINARY_PATH"
-    chmod +x "$BINARY_PATH"
-  else
-    echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
-    cp "$BINARY_NAME" "$BINARY_PATH"
-    chmod +x "$BINARY_PATH"
+  echo -e "${BLUE}Installing to ${INSTALL_DIR}...${NC}"
+  # Remove old binary name if it exists
+  if [[ "$BINARY_TYPE" == "client" && -f "${INSTALL_DIR}/local-to-pub-client" ]]; then
+    echo -e "${YELLOW}Removing old binary: local-to-pub-client${NC}"
+    rm "${INSTALL_DIR}/local-to-pub-client"
+  fi
+  cp "$BINARY_NAME" "$BINARY_PATH"
+  chmod +x "$BINARY_PATH"
+  if [[ -n "$ALIAS_NAME" ]]; then
+    ln -sf "$BINARY_PATH" "${INSTALL_DIR}/${ALIAS_NAME}"
   fi
 fi
 

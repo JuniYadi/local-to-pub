@@ -12,6 +12,7 @@ const { values } = parseArgs({
     server: { type: "string", short: "s" },
     token: { type: "string", short: "t" },
     uri: { type: "string", short: "y" },
+    "host-header": { type: "string" },
     help: { type: "boolean", default: false },
   },
   strict: true,
@@ -24,6 +25,7 @@ Usage: tunnel [options]
 Options:
   -p, --port <port>     Local port to forward (default: 3000)
   -h, --host <host>     Local host to forward (default: localhost)
+  --host-header <host>  Override Host header (e.g. localhost:3000)
   -s, --server <url>    Server WebSocket URL (or set TUNNEL_SERVER)
   -t, --token <token>   Auth token (or set TUNNEL_TOKEN)
   -y, --uri <subdomain> Request specific subdomain (optional)
@@ -35,6 +37,7 @@ Options:
 async function main() {
   const localPort = Number(values.port);
   const localHost = values.host || "localhost";
+  const hostHeader = values["host-header"];
 
   if (isNaN(localPort) || localPort < 1 || localPort > 65535) {
     console.error("Invalid port number");
@@ -62,6 +65,7 @@ async function main() {
     token: config.token,
     localHost,
     localPort,
+    hostHeader,
     requestedSubdomain: values.uri,
     onConnected: (url) => {
       console.log(`\n✓ Tunnel active: ${url}`);

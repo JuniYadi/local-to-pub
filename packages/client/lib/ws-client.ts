@@ -6,6 +6,7 @@ export interface TunnelClientOptions {
   token: string;
   localHost: string;
   localPort: number;
+  hostHeader?: string;
   requestedSubdomain?: string;
   onConnected?: (url: string) => void;
   onDisconnected?: () => void;
@@ -97,6 +98,7 @@ export class TunnelClient {
       path,
       headers,
       body,
+      hostHeader: this.options.hostHeader,
     });
 
     this.ws?.send(JSON.stringify({
