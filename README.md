@@ -43,16 +43,31 @@ export BASE_DOMAIN="tunnel.example.com"
 
 ### Client (Local)
 
-```bash
-curl -s https://raw.githubusercontent.com/JuniYadi/local-to-pub/refs/heads/main/install.sh | bash -s -- --client
+1. **Install the client**:
+   ```bash
+   curl -s https://raw.githubusercontent.com/JuniYadi/local-to-pub/refs/heads/main/install.sh | bash -s -- --client
+   ```
 
-# Create config
-mkdir -p ~/.tunnel
-echo '{"server":"wss://tunnel.example.com/tunnel","token":"YOUR_TOKEN"}' > ~/.tunnel/config.json
+2. **Get your token**:
+   - Access your server's dashboard at `http://tunnel.example.com` (or your `BASE_DOMAIN`).
+   - Log in with your `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
+   - Click **"Generate New Token"** and copy it.
 
-# Start tunnel
-bun run start --port 3000
-```
+3. **Configure the client**:
+   ```bash
+   mkdir -p ~/.tunnel
+   cat <<EOF > ~/.tunnel/config.json
+   {
+     "server": "wss://tunnel.example.com/tunnel",
+     "token": "YOUR_GENERATED_TOKEN"
+   }
+   EOF
+   ```
+
+4. **Start your tunnel**:
+   ```bash
+   ltp --port 3000
+   ```
 
 ## Admin Panel
 
@@ -91,14 +106,22 @@ bun run build:server
 | `ADMIN_USERNAME` | Admin username | (required) |
 | `ADMIN_PASSWORD` | Admin password | (required) |
 | `ADMIN_SESSION_SECRET` | Session signing | (required) |
+| `ALLOW_CUSTOM_SUBDOMAINS` | Allow clients to request specific URIs | `true` |
 
 ## CLI Options
 
+### Client
+
+```bash
+local-to-pub --port <port>         # Local port (default: 3000)
+local-to-pub --uri <subdomain>     # Request a specific subdomain
+local-to-pub --host-header <host>  # Override Host header
 ```
-tunnel -p <port>     Local port (default: 3000)
-tunnel -h <host>     Local host (default: localhost)
-tunnel -s <url>      Server WebSocket URL
-tunnel -t <token>    Auth token
+
+### Server
+
+```bash
+local-to-pub-server --claim-subdomain=false  # Disable custom subdomain requests
 ```
 
 ## Architecture
