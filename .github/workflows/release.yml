@@ -1,8 +1,9 @@
 name: Release
 
 on:
-  release:
-    types: [created]
+  push:
+    tags:
+      - 'v*'
 
 permissions:
   contents: write
@@ -18,7 +19,7 @@ jobs:
       - name: Get version from tag
         id: tag_version
         run: |
-          TAG_VERSION=${{ github.event.release.tag_name }}
+          TAG_VERSION=${{ github.ref_name }}
           NEW_VERSION=${TAG_VERSION#v}
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
@@ -147,7 +148,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           name: v${{ needs.version.outputs.version }}
-          tag_name: ${{ github.event.release.tag_name }}
+          tag_name: ${{ github.ref }}
           body: ${{ steps.checksums.outputs.body }}
           draft: false
           prerelease: false
