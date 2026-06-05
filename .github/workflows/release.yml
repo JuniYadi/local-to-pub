@@ -1,6 +1,8 @@
 name: Release
 
 on:
+  release:
+    types: [created]
   workflow_dispatch:
     inputs:
       version_type:
@@ -24,15 +26,29 @@ jobs:
   version:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.bump.outputs.new_version }}
+      version: ${{ steps.final.outputs.version }}
       previous_version: ${{ steps.bump.outputs.previous_version }}
     steps:
       - uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Bump version
+      - name: Get version from tag
+        id: tag_version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            TAG_VERSION=${{ github.event.release.tag_name }}
+            # Remove 'v' prefix
+            NEW_VERSION=${TAG_VERSION#v}
+            echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+            echo "is_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_release=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Bump version (Manual only)
         id: bump
+        if: github.event_name == 'workflow_dispatch'
         run: |
           CURRENT=$(node -p "require('./package.json').version")
           echo "Previous version: $CURRENT" >> $GITHUB_STEP_SUMMARY
@@ -53,7 +69,8 @@ jobs:
           echo "previous_version=$CURRENT" >> $GITHUB_OUTPUT
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
 
-      - name: Commit version bump and create tag
+      - name: Commit version bump and create tag (Manual only)
+        if: github.event_name == 'workflow_dispatch'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -62,6 +79,15 @@ jobs:
           git push
           git tag -a v${{ steps.bump.outputs.new_version }} -m "Release v${{ steps.bump.outputs.new_version }}"
           git push origin v${{ steps.bump.outputs.new_version }}
+
+      - name: Set final version
+        id: final
+        run: |
+          if [ "${{ steps.tag_version.outputs.is_release }}" == "true" ]; then
+            echo "version=${{ steps.tag_version.outputs.new_version }}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${{ steps.bump.outputs.new_version }}" >> $GITHUB_OUTPUT
+          fi
 
   build:
     needs: version
@@ -126,7 +152,7 @@ jobs:
             --compile \
             --target=${{ matrix.target }} \
             --define VERSION="'${VERSION}'" \
-            --outfile=local-to-pub-server
+            --outfile=local-to-pub-server-${{ matrix.platform }}-${{ matrix.arch }}
 
       - name: Build client
         if: matrix.binary == 'client'
@@ -134,14 +160,14 @@ jobs:
           bun build ./packages/client/index.ts \
             --compile \
             --target=${{ matrix.target }} \
-            --outfile=local-to-pub-client
+            --outfile=local-to-pub-client-${{ matrix.platform }}-${{ matrix.arch }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
-            local-to-pub-${{ matrix.binary }}
+            local-to-pub-${{ matrix.binary }}-${{ matrix.platform }}-${{ matrix.arch }}
           retention-days: 7
 
   release:
@@ -158,6 +184,7 @@ jobs:
           cd artifacts
           for dir in */; do
             BINARY_DIR=$(basename "$dir")
+            # The binary inside has the same platform/arch name now
             tar -czf "../local-to-pub-${BINARY_DIR}-${{ needs.version.outputs.version }}.tar.gz" -C "$dir" .
           done
 
