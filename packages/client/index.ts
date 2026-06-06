@@ -13,12 +13,18 @@ const { values } = parseArgs({
     token: { type: "string", short: "t" },
     uri: { type: "string", short: "y" },
     "host-header": { type: "string" },
+    version: { type: "boolean", short: "v", default: false },
     help: { type: "boolean", default: false },
   },
   strict: true,
 });
 
-if (values.help) {
+const VERSION = "0.0.10";
+
+if (values.version) {
+  console.log(`local-to-pub v${VERSION}`);
+  process.exit(0);
+}
   console.log(`
 Usage: tunnel [options]
 

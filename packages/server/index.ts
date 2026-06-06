@@ -23,10 +23,16 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const SESSION_COOKIE = "admin_session";
 const FRONTEND_PREFIX = "/static/";
 const FRONTEND_ENTRYPOINT = new URL("./frontend.tsx", import.meta.url);
+const VERSION = "0.0.10";
 
 // Parse CLI arguments for --claim-subdomain flag
 let ALLOW_CUSTOM_SUBDOMAINS = (Bun.env.ALLOW_CUSTOM_SUBDOMAINS ?? "true") === "true";
 const cliArgs = process.argv.slice(2);
+
+if (cliArgs.includes("--version") || cliArgs.includes("-v")) {
+  console.log(`local-to-pub-server v${VERSION}`);
+  process.exit(0);
+}
 const claimSubdomainArg = cliArgs.find(arg => arg.startsWith("--claim-subdomain="));
 if (claimSubdomainArg) {
   const value = claimSubdomainArg.split("=")[1];
