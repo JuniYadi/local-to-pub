@@ -61,6 +61,26 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
     const bodyBuffer = await response.arrayBuffer();
     const bodyBase64 = Buffer.from(bodyBuffer).toString("base64");
 
+    // Rewrite Location header if it points to local server
+    if (responseHeaders["location"]) {
+      const location = responseHeaders["location"];
+      const forwardedHost = req.headers["x-forwarded-host"];
+      const forwardedProto = req.headers["x-forwarded-proto"] || "http";
+      
+      if (forwardedHost) {
+        try {
+          const locUrl = new URL(location, `http://${req.host}:${req.port}`);
+          if (locUrl.host === `${req.host}:${req.port}` || locUrl.host === req.host) {
+            // It's a redirect to the local server, rewrite to public URL
+            const newLocation = new URL(locUrl.pathname + locUrl.search, `${forwardedProto}://${forwardedHost}`);
+            responseHeaders["location"] = newLocation.toString();
+          }
+        } catch {
+          // Ignore invalid URLs in Location header
+        }
+      }
+    }
+
     return {
       status: response.status,
       headers: responseHeaders,
