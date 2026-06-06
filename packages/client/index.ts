@@ -14,6 +14,8 @@ const { values } = parseArgs({
     uri: { type: "string", short: "y" },
     "host-header": { type: "string" },
     version: { type: "boolean", short: "v", default: false },
+    upgrade: { type: "boolean", default: false },
+    global: { type: "boolean", default: false },
     help: { type: "boolean", default: false },
   },
   allowPositionals: true,
@@ -24,6 +26,12 @@ const VERSION = "0.0.10";
 
 if (values.version) {
   console.log(`local-to-pub v${VERSION}`);
+  process.exit(0);
+}
+
+if (values.upgrade) {
+  const { upgrade } = await import("./lib/upgrade");
+  await upgrade({ global: values.global ?? false });
   process.exit(0);
 }
 
@@ -38,6 +46,8 @@ Options:
   -s, --server <url>    Server WebSocket URL (or set TUNNEL_SERVER)
   -t, --token <token>   Auth token (or set TUNNEL_TOKEN)
   -y, --uri <subdomain> Request specific subdomain (optional)
+  --upgrade             Upgrade to latest version
+  --global              Install/upgrade to system-wide directory (/usr/local/bin)
   --help                Show this help message
 `);
   process.exit(0);
