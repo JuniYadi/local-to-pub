@@ -60,6 +60,9 @@ interface WebSocketData {
   subdomain?: string;
   tokenId?: number;
   authenticated: boolean;
+  type: "control" | "tunnel";
+  wsRequestId?: string;
+  path?: string;
 }
 
 interface SessionPayload {
@@ -273,7 +276,7 @@ const server = Bun.serve<WebSocketData>({
       if (url.pathname === "/tunnel") {
         // Upgrade to WebSocket
         const upgraded = server.upgrade(req, {
-          data: { authenticated: false },
+          data: { authenticated: false, type: "control" },
         });
         if (!upgraded) {
           return new Response("WebSocket upgrade failed", { status: 400 });
@@ -479,6 +482,24 @@ const server = Bun.serve<WebSocketData>({
       return new Response("Invalid subdomain", { status: 400 });
     }
 
+    // Check if this is a WebSocket upgrade request for a tunnel
+    if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      const wsRequestId = Bun.randomUUIDv7();
+      const upgraded = server.upgrade(req, {
+        data: {
+          authenticated: true,
+          type: "tunnel",
+          subdomain,
+          wsRequestId,
+          path: url.pathname + url.search, // Store path for the 'open' event
+        },
+      });
+      if (!upgraded) {
+        return new Response("WebSocket upgrade failed", { status: 400 });
+      }
+      return undefined;
+    }
+
     // Check if tunnel exists
     const ws = tunnelManager.getConnection(subdomain);
     if (!ws) {
@@ -534,12 +555,48 @@ const server = Bun.serve<WebSocketData>({
   },
 
   websocket: {
-    open(_ws) {
-      console.log("WebSocket connected, waiting for auth...");
+    open(ws) {
+      const data = ws.data;
+      if (data.type === "control") {
+        console.log("Control WebSocket connected, waiting for auth...");
+      } else if (data.type === "tunnel") {
+        const subdomain = data.subdomain!;
+        const wsRequestId = data.wsRequestId!;
+        const controlWs = tunnelManager.getConnection(subdomain);
+
+        if (!controlWs) {
+          ws.close();
+          return;
+        }
+
+        // Register the browser connection
+        tunnelManager.registerBrowserConnection(wsRequestId, subdomain, ws);
+
+        // Notify the client to open a local WebSocket
+        controlWs.send(serializeServerMessage({
+          type: "ws_open",
+          requestId: wsRequestId,
+          path: data.path || "/",
+          headers: {}, // We'll pass actual headers in the future if needed
+        }));
+      }
     },
 
     async message(ws, message) {
       const data = ws.data;
+
+      if (data.type === "tunnel") {
+        const controlWs = tunnelManager.getConnection(data.subdomain!);
+        if (controlWs) {
+          controlWs.send(serializeServerMessage({
+            type: "ws_data",
+            requestId: data.wsRequestId!,
+            data: typeof message === "string" ? Buffer.from(message).toString("base64") : Buffer.from(message).toString("base64"),
+          }));
+        }
+        return;
+      }
+
       const msgStr = typeof message === "string" ? message : message.toString();
       const parsed = parseClientMessage(msgStr);
 
@@ -647,16 +704,44 @@ const server = Bun.serve<WebSocketData>({
           body: parsed.body,
         });
       }
+
+      if (parsed.type === "ws_ready") {
+        // Client is ready, we could flush buffered messages if we had any
+      }
+
+      if (parsed.type === "ws_data") {
+        const browserWs = tunnelManager.getBrowserConnection(parsed.requestId);
+        if (browserWs) {
+          browserWs.send(Buffer.from(parsed.data, "base64"));
+        }
+      }
+
+      if (parsed.type === "ws_close") {
+        const browserWs = tunnelManager.getBrowserConnection(parsed.requestId);
+        if (browserWs) {
+          browserWs.close();
+          tunnelManager.unregisterBrowserConnection(parsed.requestId);
+        }
+      }
     },
 
     async close(ws) {
       const data = ws.data;
-      if (data.subdomain) {
+      if (data.type === "control" && data.subdomain) {
         // Record disconnection in history
         recordDisconnection(db, data.subdomain);
         await tunnelStore.unregister(data.subdomain);
         tunnelManager.unregisterConnection(data.subdomain);
         console.log(`Tunnel disconnected: ${data.subdomain}`);
+      } else if (data.type === "tunnel" && data.wsRequestId) {
+        const controlWs = tunnelManager.getConnection(data.subdomain!);
+        if (controlWs) {
+          controlWs.send(serializeServerMessage({
+            type: "ws_close",
+            requestId: data.wsRequestId,
+          }));
+        }
+        tunnelManager.unregisterBrowserConnection(data.wsRequestId);
       }
     },
   },

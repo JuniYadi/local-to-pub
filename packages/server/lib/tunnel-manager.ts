@@ -22,11 +22,12 @@ export interface TunnelConnection {
 }
 
 export class TunnelManager {
-  private connections = new Map<string, ServerWebSocket<unknown>>();
+  private connections = new Map<string, ServerWebSocket<any>>();
+  private browserConnections = new Map<string, { ws: ServerWebSocket<any>; subdomain: string }>();
   private pendingRequests = new Map<string, PendingRequest>();
   private readonly REQUEST_TIMEOUT = 30000; // 30 seconds
 
-  registerConnection(subdomain: string, ws: ServerWebSocket<unknown>): void {
+  registerConnection(subdomain: string, ws: ServerWebSocket<any>): void {
     this.connections.set(subdomain, ws);
   }
 
@@ -41,6 +42,26 @@ export class TunnelManager {
         this.pendingRequests.delete(requestId);
       }
     }
+
+    // Close all browser connections for this subdomain
+    for (const [wsRequestId, conn] of this.browserConnections) {
+      if (conn.subdomain === subdomain) {
+        conn.ws.close();
+        this.browserConnections.delete(wsRequestId);
+      }
+    }
+  }
+
+  registerBrowserConnection(wsRequestId: string, subdomain: string, ws: ServerWebSocket<any>): void {
+    this.browserConnections.set(wsRequestId, { ws, subdomain });
+  }
+
+  unregisterBrowserConnection(wsRequestId: string): void {
+    this.browserConnections.delete(wsRequestId);
+  }
+
+  getBrowserConnection(wsRequestId: string): ServerWebSocket<any> | undefined {
+    return this.browserConnections.get(wsRequestId)?.ws;
   }
 
   getConnection(subdomain: string): ServerWebSocket<unknown> | undefined {
