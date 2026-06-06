@@ -26,6 +26,7 @@ export class TunnelClient {
   private maxReconnectAttempts = 10;
   private reconnectDelay = 1000;
   private shouldReconnect = true;
+  private localWebSockets = new Map<string, WebSocket>();
 
   constructor(options: TunnelClientOptions) {
     this.options = options;
@@ -66,6 +67,18 @@ export class TunnelClient {
 
         if (msg.type === "request") {
           await this.handleRequest(msg);
+        }
+
+        if (msg.type === "ws_open") {
+          this.handleWSOpen(msg.requestId as string, msg.path as string);
+        }
+
+        if (msg.type === "ws_data") {
+          this.handleWSData(msg.requestId as string, msg.data as string);
+        }
+
+        if (msg.type === "ws_close") {
+          this.handleWSClose(msg.requestId as string);
         }
       };
 
@@ -110,6 +123,64 @@ export class TunnelClient {
     }));
   }
 
+  private handleWSOpen(requestId: string, path: string): void {
+    const url = `ws://${this.options.localHost}:${this.options.localPort}${path}`;
+    const localWs = new WebSocket(url);
+
+    localWs.onopen = () => {
+      this.ws?.send(JSON.stringify({
+        type: "ws_ready",
+        requestId,
+      }));
+    };
+
+    localWs.onmessage = (event) => {
+      const data = event.data;
+      let base64Data: string;
+
+      if (typeof data === "string") {
+        base64Data = Buffer.from(data).toString("base64");
+      } else {
+        base64Data = Buffer.from(data).toString("base64");
+      }
+
+      this.ws?.send(JSON.stringify({
+        type: "ws_data",
+        requestId,
+        data: base64Data,
+      }));
+    };
+
+    localWs.onclose = () => {
+      this.ws?.send(JSON.stringify({
+        type: "ws_close",
+        requestId,
+      }));
+      this.localWebSockets.delete(requestId);
+    };
+
+    localWs.onerror = () => {
+      this.handleWSClose(requestId);
+    };
+
+    this.localWebSockets.set(requestId, localWs);
+  }
+
+  private handleWSData(requestId: string, data: string): void {
+    const localWs = this.localWebSockets.get(requestId);
+    if (localWs && localWs.readyState === WebSocket.OPEN) {
+      localWs.send(Buffer.from(data, "base64"));
+    }
+  }
+
+  private handleWSClose(requestId: string): void {
+    const localWs = this.localWebSockets.get(requestId);
+    if (localWs) {
+      localWs.close();
+      this.localWebSockets.delete(requestId);
+    }
+  }
+
   private attemptReconnect(): void {
     if (this.reconnectAttempts >= this.maxReconnectAttempts) {
       this.options.onError?.(new Error("Max reconnection attempts reached"));
@@ -129,5 +200,9 @@ export class TunnelClient {
   disconnect(): void {
     this.shouldReconnect = false;
     this.ws?.close();
+    for (const localWs of this.localWebSockets.values()) {
+      localWs.close();
+    }
+    this.localWebSockets.clear();
   }
 }

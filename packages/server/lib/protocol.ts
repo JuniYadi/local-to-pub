@@ -15,7 +15,12 @@ export interface ResponseMessage {
   body: string; // base64 encoded
 }
 
-export type ClientMessage = AuthMessage | ResponseMessage;
+export interface WSReadyMessage {
+  type: "ws_ready";
+  requestId: string;
+}
+
+export type ClientMessage = AuthMessage | ResponseMessage | WSReadyMessage | WSDataMessage | WSCloseMessage;
 
 // Server → Client messages
 export interface AuthOkMessage {
@@ -38,7 +43,25 @@ export interface RequestMessage {
   body: string; // base64 encoded
 }
 
-export type ServerMessage = AuthOkMessage | AuthErrorMessage | RequestMessage;
+export interface WSOpenMessage {
+  type: "ws_open";
+  requestId: string;
+  path: string;
+  headers: Record<string, string>;
+}
+
+export interface WSDataMessage {
+  type: "ws_data";
+  requestId: string;
+  data: string; // base64 encoded
+}
+
+export interface WSCloseMessage {
+  type: "ws_close";
+  requestId: string;
+}
+
+export type ServerMessage = AuthOkMessage | AuthErrorMessage | RequestMessage | WSOpenMessage | WSDataMessage | WSCloseMessage;
 
 // Helper functions
 export function parseClientMessage(data: string): ClientMessage | null {
@@ -53,6 +76,15 @@ export function parseClientMessage(data: string): ClientMessage | null {
     }
     if (msg.type === "response" && typeof msg.requestId === "string") {
       return msg as ResponseMessage;
+    }
+    if (msg.type === "ws_ready" && typeof msg.requestId === "string") {
+      return msg as WSReadyMessage;
+    }
+    if (msg.type === "ws_data" && typeof msg.requestId === "string" && typeof msg.data === "string") {
+      return msg as WSDataMessage;
+    }
+    if (msg.type === "ws_close" && typeof msg.requestId === "string") {
+      return msg as WSCloseMessage;
     }
     return null;
   } catch {
