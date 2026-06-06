@@ -106,4 +106,54 @@ describe("HTTP Proxy", () => {
     // Pass through path as-is from local server response
     expect(result.headers["location"]).toBe("https://pgreen.tunnel.juniyadi.id/id/login/start?next=%2Fid&provider=github");
   });
+
+  test("preserves locale prefix when local redirect strips it", async () => {
+    const mockResponse = new Response(null, {
+      status: 307,
+      headers: { "Location": "/login/start?next=%2Fid&provider=github" },
+    });
+
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async () => mockResponse;
+
+    const result = await proxyRequest({
+      host: "localhost",
+      port: 3300,
+      method: "GET",
+      path: "/id/login/start?next=%2Fid&provider=github",
+      headers: {
+        "x-forwarded-host": "pgreen.tunnel.juniyadi.id",
+        "x-forwarded-proto": "https"
+      },
+      body: "",
+    });
+
+    expect(result.status).toBe(307);
+    expect(result.headers["location"]).toBe("https://pgreen.tunnel.juniyadi.id/id/login/start?next=%2Fid&provider=github");
+  });
+
+  test("preserves locale prefix when absolute local redirect strips it", async () => {
+    const mockResponse = new Response(null, {
+      status: 307,
+      headers: { "Location": "http://localhost:3300/login/start?next=%2Fid&provider=github" },
+    });
+
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async () => mockResponse;
+
+    const result = await proxyRequest({
+      host: "localhost",
+      port: 3300,
+      method: "GET",
+      path: "/id/login/start?next=%2Fid&provider=github",
+      headers: {
+        "x-forwarded-host": "pgreen.tunnel.juniyadi.id",
+        "x-forwarded-proto": "https"
+      },
+      body: "",
+    });
+
+    expect(result.status).toBe(307);
+    expect(result.headers["location"]).toBe("https://pgreen.tunnel.juniyadi.id/id/login/start?next=%2Fid&provider=github");
+  });
 });

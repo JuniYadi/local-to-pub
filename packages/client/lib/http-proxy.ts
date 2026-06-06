@@ -72,8 +72,21 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
           const locUrl = new URL(location, `http://${req.host}:${req.port}`);
           if (locUrl.host === `${req.host}:${req.port}` || locUrl.host === req.host) {
             // It's a redirect to the local server, rewrite to public URL
-            // Pass through the path as-is from the local server response
-            const redirectPath = locUrl.pathname + locUrl.search;
+            let redirectPath = locUrl.pathname + locUrl.search;
+
+            // Preserve locale/path prefixes stripped by the local app from local redirects
+            if (req.path) {
+              const redirectPathname = locUrl.pathname;
+              const originalPathname = req.path.split("?")[0];
+
+              if (originalPathname.endsWith(redirectPathname) && redirectPathname !== originalPathname) {
+                const prefix = originalPathname.slice(0, originalPathname.length - redirectPathname.length);
+                if (prefix.startsWith("/")) {
+                  redirectPath = prefix + redirectPath;
+                }
+              }
+            }
+
             const newLocation = new URL(redirectPath, `${forwardedProto}://${forwardedHost}`);
             responseHeaders["location"] = newLocation.toString();
           }
