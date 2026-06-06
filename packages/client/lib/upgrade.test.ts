@@ -1,5 +1,5 @@
 // packages/client/lib/upgrade.test.ts
-import { test, expect, describe, skipIf } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch, downloadAndExtract, upgrade } from "./upgrade";
 import { existsSync } from "fs";
 
