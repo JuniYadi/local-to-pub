@@ -65,6 +65,7 @@ await tunnelStore.connect();
 interface WebSocketData {
   subdomain?: string;
   tokenId?: number;
+  connectionId?: number;
   authenticated: boolean;
   type: "control" | "tunnel";
   wsRequestId?: string;
@@ -641,20 +642,47 @@ const server = Bun.serve<WebSocketData>({
             ws.close();
             return;
           }
-          // Check if already in use
-          if (await tunnelStore.exists(parsed.requestedSubdomain) || tunnelManager.getConnection(parsed.requestedSubdomain)) {
-            ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
-            ws.close();
-            return;
+
+          // Force unregister if the SAME token is trying to reconnect to the SAME subdomain
+          const existingWS = tunnelManager.getConnection(parsed.requestedSubdomain);
+          if (existingWS) {
+            const existingData = existingWS.data as WebSocketData;
+            if (existingData.tokenId === tokenRecord.id) {
+              console.log(`Reconnecting same token to subdomain: ${parsed.requestedSubdomain}. Closing old connection.`);
+              if (existingData.connectionId) {
+                recordDisconnection(db, existingData.connectionId);
+              }
+              existingWS.close();
+              tunnelManager.unregisterConnection(parsed.requestedSubdomain);
+              await tunnelStore.unregister(parsed.requestedSubdomain);
+            } else {
+              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
+              ws.close();
+              return;
+            }
           }
+
           subdomain = parsed.requestedSubdomain;
         } else if (tokenRecord.subdomain) {
           subdomain = tokenRecord.subdomain;
-          // Ensure it's not already in use by another connection
-          if (tunnelManager.getConnection(subdomain)) {
-            ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
-            ws.close();
-            return;
+
+          // Force unregister if the SAME token is trying to reconnect
+          const existingWS = tunnelManager.getConnection(subdomain);
+          if (existingWS) {
+            const existingData = existingWS.data as WebSocketData;
+            if (existingData.tokenId === tokenRecord.id) {
+              console.log(`Reconnecting same token to persistent subdomain: ${subdomain}. Closing old connection.`);
+              if (existingData.connectionId) {
+                recordDisconnection(db, existingData.connectionId);
+              }
+              existingWS.close();
+              tunnelManager.unregisterConnection(subdomain);
+              await tunnelStore.unregister(subdomain);
+            } else {
+              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
+              ws.close();
+              return;
+            }
           }
         } else {
           // Generate unique subdomain
@@ -694,7 +722,7 @@ const server = Bun.serve<WebSocketData>({
         }));
 
         // Record connection in history
-        recordConnection(db, subdomain, tokenRecord.id);
+        data.connectionId = recordConnection(db, subdomain, tokenRecord.id);
 
         console.log(`Tunnel registered: ${subdomain}`);
       }
@@ -735,7 +763,9 @@ const server = Bun.serve<WebSocketData>({
       const data = ws.data;
       if (data.type === "control" && data.subdomain) {
         // Record disconnection in history
-        recordDisconnection(db, data.subdomain);
+        if (data.connectionId) {
+          recordDisconnection(db, data.connectionId);
+        }
         await tunnelStore.unregister(data.subdomain);
         tunnelManager.unregisterConnection(data.subdomain);
         console.log(`Tunnel disconnected: ${data.subdomain}`);
