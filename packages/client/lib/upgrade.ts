@@ -1,5 +1,5 @@
 // packages/client/lib/upgrade.ts
-import { homedir } from "os";
+import { homedir, platform, arch } from "os";
 import { join } from "path";
 
 export const REPO = "JuniYadi/local-to-pub";
@@ -38,6 +38,30 @@ export async function getCurrentVersion(): Promise<string> {
     return match[1];
   } catch (error) {
     throw new Error(`Failed to get current version: ${(error as Error).message}`);
+  }
+}
+
+export function detectOS(): string {
+  const os = platform();
+  switch (os) {
+    case "darwin":
+      return "darwin";
+    case "linux":
+      return "linux";
+    default:
+      throw new Error(`Unsupported operating system: ${os}`);
+  }
+}
+
+export function detectArch(): string {
+  const a = arch();
+  switch (a) {
+    case "x64":
+      return "amd64";
+    case "arm64":
+      return "arm64";
+    default:
+      throw new Error(`Unsupported architecture: ${a}`);
   }
 }
 

@@ -1,6 +1,6 @@
 // packages/client/lib/upgrade.test.ts
 import { test, expect, describe } from "bun:test";
-import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion } from "./upgrade";
+import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch } from "./upgrade";
 
 describe("Upgrade", () => {
   describe("getBinaryPath", () => {
@@ -41,6 +41,20 @@ describe("Upgrade", () => {
     test("fetches latest version from GitHub API", async () => {
       const version = await getLatestVersion();
       expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+    });
+  });
+
+  describe("detectOS", () => {
+    test("returns darwin on macOS", () => {
+      const os = detectOS();
+      expect(["darwin", "linux"]).toContain(os);
+    });
+  });
+
+  describe("detectArch", () => {
+    test("returns amd64 or arm64", () => {
+      const arch = detectArch();
+      expect(["amd64", "arm64"]).toContain(arch);
     });
   });
 });
