@@ -1,6 +1,6 @@
 // packages/client/lib/upgrade.test.ts
 import { test, expect, describe } from "bun:test";
-import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch, downloadAndExtract } from "./upgrade";
+import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch, downloadAndExtract, upgrade } from "./upgrade";
 
 describe("Upgrade", () => {
   describe("getBinaryPath", () => {
@@ -66,6 +66,17 @@ describe("Upgrade", () => {
     test("throws on download failure", async () => {
       await expect(downloadAndExtract("https://invalid.example.com/fake.tar.gz", "/tmp/test"))
         .rejects.toThrow();
+    });
+  });
+
+  describe("upgrade", () => {
+    test("upgrade function exists and is async", () => {
+      expect(typeof upgrade).toBe("function");
+      // Verify it returns a promise
+      const result = upgrade({ global: false });
+      expect(result).toBeInstanceOf(Promise);
+      // Don't actually run it in test
+      result.catch(() => {}); // Suppress unhandled rejection
     });
   });
 });

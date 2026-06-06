@@ -148,3 +148,87 @@ export async function downloadAndExtract(
     await rm(tmpDir, { recursive: true, force: true });
   }
 }
+
+export interface UpgradeOptions {
+  global: boolean;
+}
+
+export async function upgrade(options: UpgradeOptions): Promise<void> {
+  const { global } = options;
+  
+  console.log("Checking for updates...");
+  console.log("");
+  
+  // Get current version
+  let currentVersion: string;
+  try {
+    currentVersion = await getCurrentVersion();
+  } catch (error) {
+    console.error(`✗ Failed to get current version: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  
+  // Get latest version
+  let latestVersion: string;
+  try {
+    latestVersion = await getLatestVersion();
+  } catch (error) {
+    console.error(`✗ Failed to check for updates: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  
+  // Compare versions
+  if (currentVersion === latestVersion) {
+    console.log(`✓ Already up to date: v${currentVersion}`);
+    return;
+  }
+  
+  console.log(`→ Update available: ${currentVersion} → ${latestVersion}`);
+  console.log("");
+  
+  // Determine target path
+  const targetPath = getBinaryPath(global);
+  
+  // Check permissions
+  try {
+    // Test write permission by checking directory
+    const dir = targetPath.substring(0, targetPath.lastIndexOf("/"));
+    await Bun.write(`${dir}/.ltp-test`, "");
+    await rm(`${dir}/.ltp-test`);
+  } catch (error) {
+    if ((error as Error).message.includes("EACCES") || (error as Error).message.includes("permission")) {
+      console.error(`✗ Permission denied: ${targetPath}`);
+      console.error("");
+      console.error("Try running with sudo:");
+      console.error("  local-to-pub --upgrade --global");
+      process.exit(1);
+    }
+  }
+  
+  // Download and install
+  const os = detectOS();
+  const arch = detectArch();
+  const downloadUrl = getDownloadUrl(latestVersion, os, arch);
+  
+  try {
+    await downloadAndExtract(downloadUrl, targetPath);
+  } catch (error) {
+    console.error(`✗ Upgrade failed: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  
+  // Verify
+  console.log("");
+  try {
+    const newVersion = await getCurrentVersion();
+    if (newVersion === latestVersion) {
+      console.log(`✓ Successfully upgraded to v${latestVersion}`);
+    } else {
+      console.error(`✗ Upgrade verification failed: expected ${latestVersion}, got ${newVersion}`);
+      process.exit(1);
+    }
+  } catch (error) {
+    console.error(`✗ Upgrade verification failed: ${(error as Error).message}`);
+    process.exit(1);
+  }
+}
