@@ -125,10 +125,10 @@ export function recordConnection(db: TokenDb, subdomain: string, tokenId: number
   return result.lastInsertRowId as number;
 }
 
-export function recordDisconnection(db: TokenDb, subdomain: string): void {
+export function recordDisconnection(db: TokenDb, connectionId: number): void {
   db.query(
-    "UPDATE connection_history SET disconnected_at = ? WHERE subdomain = ? AND disconnected_at IS NULL"
-  ).run(Date.now(), subdomain);
+    "UPDATE connection_history SET disconnected_at = ? WHERE id = ?"
+  ).run(Date.now(), connectionId);
 }
 
 export function getLiveConnections(db: TokenDb): ConnectionRecord[] {
