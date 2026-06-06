@@ -3,6 +3,7 @@
 import { parseArgs } from "node:util";
 import { loadConfig } from "./lib/config";
 import { TunnelClient } from "./lib/ws-client";
+import { getAppVersion } from "./lib/version";
 
 const { values } = parseArgs({
   args: Bun.argv.slice(2),
@@ -22,7 +23,7 @@ const { values } = parseArgs({
   strict: false,
 });
 
-const VERSION = "0.0.10";
+const VERSION = getAppVersion();
 
 if (values.version) {
   console.log(`local-to-pub v${VERSION}`);
@@ -46,6 +47,7 @@ Options:
   -s, --server <url>    Server WebSocket URL (or set TUNNEL_SERVER)
   -t, --token <token>   Auth token (or set TUNNEL_TOKEN)
   -y, --uri <subdomain> Request specific subdomain (optional)
+  -v, --version         Show client version
   --upgrade             Upgrade to latest version
   --global              Install/upgrade to system-wide directory (/usr/local/bin)
   --help                Show this help message

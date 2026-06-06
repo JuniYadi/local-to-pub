@@ -87,6 +87,7 @@ jobs:
           bun run scripts/embed-frontend.ts
           bun build ./packages/server/index.ts \
             --compile \
+            --define VERSION="'${VERSION}'" \
             --target=${{ matrix.target }} \
             --outfile=local-to-pub-server
 
@@ -96,6 +97,7 @@ jobs:
           VERSION="${{ needs.version.outputs.version }}"
           bun build ./packages/client/index.ts \
             --compile \
+            --define VERSION="'${VERSION}'" \
             --target=${{ matrix.target }} \
             --outfile=local-to-pub
 
