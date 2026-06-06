@@ -1,5 +1,5 @@
 // packages/client/lib/http-proxy.test.ts
-import { test, expect, describe, spyOn } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { proxyRequest } from "./http-proxy";
 
 describe("HTTP Proxy", () => {
@@ -9,7 +9,7 @@ describe("HTTP Proxy", () => {
       headers: { "Content-Type": "text/plain" },
     });
     
-    // @ts-ignore
+    // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
     const result = await proxyRequest({
@@ -31,7 +31,7 @@ describe("HTTP Proxy", () => {
       headers: { "Location": "http://localhost:3000/auth/callback" },
     });
     
-    // @ts-ignore
+    // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
     const result = await proxyRequest({
@@ -56,7 +56,7 @@ describe("HTTP Proxy", () => {
       headers: { "Location": "https://github.com/login" },
     });
     
-    // @ts-ignore
+    // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
     const result = await proxyRequest({
