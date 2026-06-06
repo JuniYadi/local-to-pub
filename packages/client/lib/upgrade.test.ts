@@ -1,6 +1,7 @@
 // packages/client/lib/upgrade.test.ts
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, skipIf } from "bun:test";
 import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch, downloadAndExtract, upgrade } from "./upgrade";
+import { existsSync } from "fs";
 
 describe("Upgrade", () => {
   describe("getBinaryPath", () => {
@@ -31,7 +32,10 @@ describe("Upgrade", () => {
   });
 
   describe("getCurrentVersion", () => {
-    test("returns version string from binary", async () => {
+    const binaryPath = getBinaryPath(false);
+    const binaryExists = existsSync(binaryPath);
+    
+    test.skipIf(!binaryExists)("returns version string from binary", async () => {
       const version = await getCurrentVersion();
       expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     });
