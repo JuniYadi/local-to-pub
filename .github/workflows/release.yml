@@ -115,6 +115,12 @@ jobs:
     needs: [version, build]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Download all artifacts
         uses: actions/download-artifact@v4
         with:
@@ -129,38 +135,44 @@ jobs:
           done
 
       - name: Calculate checksums
-        id: checksums
         run: |
-          echo "## 📦 Checksums" > release-body.md
-          echo "" >> release-body.md
-          echo "Verify the integrity of downloaded files:" >> release-body.md
-          echo "" >> release-body.md
-          echo '```' >> release-body.md
-          find . -name "*.tar.gz" -exec shasum -a 256 {} \; | sort >> release-body.md
-          echo '```' >> release-body.md
-          echo "" >> release-body.md
-          echo "To verify a downloaded file, run:" >> release-body.md
-          echo "" >> release-body.md
-          echo '```bash' >> release-body.md
-          echo "shasum -a 256 <downloaded-file> | grep -q \$(cat checksums.txt | grep <downloaded-file> | awk '{print \$1}')" >> release-body.md
-          echo '```' >> release-body.md
+          echo "## 📦 Checksums" > checksums.md
+          echo "" >> checksums.md
+          echo "Verify the integrity of downloaded files:" >> checksums.md
+          echo "" >> checksums.md
+          echo '```' >> checksums.md
+          find . -name "*.tar.gz" -exec shasum -a 256 {} \; | sort >> checksums.md
+          echo '```' >> checksums.md
+          echo "" >> checksums.md
+          echo "To verify a downloaded file, run:" >> checksums.md
+          echo "" >> checksums.md
+          echo '```bash' >> checksums.md
+          echo "shasum -a 256 <downloaded-file> | grep -q \$(cat checksums.txt | grep <downloaded-file> | awk '{print \$1}')" >> checksums.md
+          echo '```' >> checksums.md
 
           find . -name "*.tar.gz" -exec shasum -a 256 {} \; | sort > checksums.txt
 
-          echo "body<<EOF" >> $GITHUB_OUTPUT
-          cat release-body.md >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: v${{ needs.version.outputs.version }}
-          tag_name: ${{ github.ref }}
-          body: ${{ steps.checksums.outputs.body }}
-          draft: false
-          prerelease: false
-          files: |
-            *.tar.gz
-            checksums.txt
+      - name: Generate release notes
+        run: |
+          gh api \
+            --method POST \
+            repos/${{ github.repository }}/releases/generate-notes \
+            -f tag_name="${{ github.ref_name }}" \
+            -f target_commitish="${{ github.sha }}" \
+            --jq .body > generated-notes.md
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compose release body
+        run: bun run scripts/compose-release-notes.ts generated-notes.md checksums.md > release-body.md
+
+      - name: Create or update release
+        run: |
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            gh release edit "${{ github.ref_name }}" --title "v${{ needs.version.outputs.version }}" --notes-file release-body.md
+            gh release upload "${{ github.ref_name }}" *.tar.gz checksums.txt --clobber
+          else
+            gh release create "${{ github.ref_name }}" *.tar.gz checksums.txt --title "v${{ needs.version.outputs.version }}" --notes-file release-body.md --verify-tag
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
