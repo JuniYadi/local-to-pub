@@ -1,5 +1,5 @@
 // packages/client/lib/upgrade.test.ts
-import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { getBinaryPath, getDownloadUrl, getCurrentVersion } from "./upgrade";
 
 describe("Upgrade", () => {
