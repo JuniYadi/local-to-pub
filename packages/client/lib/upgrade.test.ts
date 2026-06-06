@@ -1,6 +1,6 @@
 // packages/client/lib/upgrade.test.ts
 import { test, expect, describe } from "bun:test";
-import { getBinaryPath, getDownloadUrl, getCurrentVersion } from "./upgrade";
+import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion } from "./upgrade";
 
 describe("Upgrade", () => {
   describe("getBinaryPath", () => {
@@ -33,6 +33,13 @@ describe("Upgrade", () => {
   describe("getCurrentVersion", () => {
     test("returns version string from binary", async () => {
       const version = await getCurrentVersion();
+      expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+    });
+  });
+
+  describe("getLatestVersion", () => {
+    test("fetches latest version from GitHub API", async () => {
+      const version = await getLatestVersion();
       expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     });
   });

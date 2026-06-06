@@ -40,3 +40,33 @@ export async function getCurrentVersion(): Promise<string> {
     throw new Error(`Failed to get current version: ${(error as Error).message}`);
   }
 }
+
+export async function getLatestVersion(): Promise<string> {
+  const response = await fetch(
+    `https://api.github.com/repos/${REPO}/releases/latest`,
+    {
+      headers: {
+        "Accept": "application/vnd.github.v3+json",
+      },
+      redirect: "follow",
+    }
+  );
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch latest version: ${response.status} ${response.statusText}`);
+  }
+
+  const data = await response.json() as { tag_name?: string };
+  
+  if (!data.tag_name) {
+    throw new Error("Invalid response from GitHub API: missing tag_name");
+  }
+
+  const version = data.tag_name.replace(/^v/, "");
+  
+  if (!version.match(/^\d+\.\d+\.\d+$/)) {
+    throw new Error(`Invalid version format from GitHub: ${version}`);
+  }
+
+  return version;
+}
