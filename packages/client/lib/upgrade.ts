@@ -1,6 +1,7 @@
 // packages/client/lib/upgrade.ts
-import { homedir, platform, arch } from "os";
+import { homedir, platform, arch, tmpdir } from "os";
 import { join } from "path";
+import { mkdtemp, rm, readdir, chmod, copyFile, mkdir } from "fs/promises";
 
 export const REPO = "JuniYadi/local-to-pub";
 export const BASE_URL = `https://github.com/${REPO}/releases`;
@@ -72,7 +73,6 @@ export async function getLatestVersion(): Promise<string> {
       headers: {
         "Accept": "application/vnd.github.v3+json",
       },
-      redirect: "follow",
     }
   );
 
@@ -99,11 +99,6 @@ export async function downloadAndExtract(
   url: string,
   targetPath: string
 ): Promise<void> {
-  const { mkdtemp, rm, readdir, chmod, copyFile } = await import("fs/promises");
-  const { tmpdir } = await import("os");
-  const { join } = await import("path");
-  const { execSync } = await import("child_process");
-
   const tmpDir = await mkdtemp(join(tmpdir(), "ltp-upgrade-"));
   
   try {
@@ -126,9 +121,8 @@ export async function downloadAndExtract(
     
     // Extract
     console.log("  Extracting...");
-    execSync(`tar -xzf "${tarballPath}" -C "${tmpDir}"`, {
-      stdio: "pipe",
-    });
+    const proc = Bun.spawn(["tar", "-xzf", tarballPath, "-C", tmpDir]);
+    await proc.exited;
     
     // Find binary
     const files = await readdir(tmpDir);
@@ -140,6 +134,10 @@ export async function downloadAndExtract(
     
     const extractedPath = join(tmpDir, binaryFile);
     
+    // Ensure target directory exists
+    const targetDir = targetPath.substring(0, targetPath.lastIndexOf("/"));
+    await mkdir(targetDir, { recursive: true });
+
     // Copy to target
     console.log("  Installing...");
     await copyFile(extractedPath, targetPath);

@@ -1,8 +1,13 @@
 // packages/client/lib/http-proxy.test.ts
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterEach } from "bun:test";
 import { proxyRequest } from "./http-proxy";
 
+const originalFetch = global.fetch;
+
 describe("HTTP Proxy", () => {
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
   test("proxyRequest forwards GET request", async () => {
     const mockResponse = new Response("hello world", {
       status: 200,
@@ -75,11 +80,11 @@ describe("HTTP Proxy", () => {
     expect(result.headers["location"]).toBe("https://github.com/login");
   });
 
-  test("preserves path prefix when redirect strips it (i18n default locale)", async () => {
-    // Next.js i18n redirect strips /id prefix from /id/login/start -> /login/start
+  test("passes through redirect path as-is from local server", async () => {
+    // Local server returns redirect, proxy should pass path as-is
     const mockResponse = new Response(null, {
       status: 307,
-      headers: { "Location": "/login/start?next=%2Fid&provider=github" },
+      headers: { "Location": "/id/login/start?next=%2Fid&provider=github" },
     });
     
     // @ts-expect-error - Mocking global fetch
@@ -89,7 +94,7 @@ describe("HTTP Proxy", () => {
       host: "localhost",
       port: 3000,
       method: "GET",
-      path: "/id/login/start?next=%2Fid&provider=github",
+      path: "/login",
       headers: {
         "x-forwarded-host": "pgreen.tunnel.juniyadi.id",
         "x-forwarded-proto": "https"
@@ -98,7 +103,7 @@ describe("HTTP Proxy", () => {
     });
 
     expect(result.status).toBe(307);
-    // Should preserve /id prefix: /id/login/start, not /login/start
+    // Pass through path as-is from local server response
     expect(result.headers["location"]).toBe("https://pgreen.tunnel.juniyadi.id/id/login/start?next=%2Fid&provider=github");
   });
 });

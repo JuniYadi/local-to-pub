@@ -62,5 +62,10 @@ describe("Upgrade", () => {
     test("is a function", () => {
       expect(typeof downloadAndExtract).toBe("function");
     });
+
+    test("throws on download failure", async () => {
+      await expect(downloadAndExtract("https://invalid.example.com/fake.tar.gz", "/tmp/test"))
+        .rejects.toThrow();
+    });
   });
 });
