@@ -72,27 +72,8 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
           const locUrl = new URL(location, `http://${req.host}:${req.port}`);
           if (locUrl.host === `${req.host}:${req.port}` || locUrl.host === req.host) {
             // It's a redirect to the local server, rewrite to public URL
-            let redirectPath = locUrl.pathname + locUrl.search;
-            
-            // Handle relative redirects (no host in Location header)
-            // When Location is relative, new URL() resolves it against base URL
-            // which may strip path prefixes (e.g., Next.js i18n stripping default locale)
-            // If redirect path exists somewhere in original request path, use original path
-            if (!location.match(/^https?:\/\//) && req.path) {
-              const redirectPathname = locUrl.pathname;
-              const originalPathname = req.path.split("?")[0];
-              
-              // Check if redirect path is a suffix of original path
-              // e.g., original: /id/login/start, redirect: /login/start → use /id/login/start
-              if (originalPathname.endsWith(redirectPathname) && redirectPathname !== originalPathname) {
-                const prefix = originalPathname.slice(0, originalPathname.length - redirectPathname.length);
-                // Only add prefix if it looks like a path prefix (starts with /)
-                if (prefix.startsWith("/")) {
-                  redirectPath = prefix + redirectPath;
-                }
-              }
-            }
-            
+            // Pass through the path as-is from the local server response
+            const redirectPath = locUrl.pathname + locUrl.search;
             const newLocation = new URL(redirectPath, `${forwardedProto}://${forwardedHost}`);
             responseHeaders["location"] = newLocation.toString();
           }
