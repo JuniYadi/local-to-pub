@@ -26,6 +26,8 @@ if (values.version) {
   console.log(`local-to-pub v${VERSION}`);
   process.exit(0);
 }
+
+if (values.help) {
   console.log(`
 Usage: tunnel [options]
 

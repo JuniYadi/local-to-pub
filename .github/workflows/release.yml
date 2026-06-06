@@ -88,7 +88,6 @@ jobs:
           bun build ./packages/server/index.ts \
             --compile \
             --target=${{ matrix.target }} \
-            --define VERSION="'${VERSION}'" \
             --outfile=local-to-pub-server
 
       - name: Build client
@@ -100,12 +99,16 @@ jobs:
             --target=${{ matrix.target }} \
             --outfile=local-to-pub
 
+      - name: Prepare artifacts
+        run: |
+          mkdir dist
+          mv local-to-pub* dist/
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.binary }}-${{ matrix.platform }}-${{ matrix.arch }}
-          path: |
-            local-to-pub*
+          path: dist/
           retention-days: 7
 
   release:
