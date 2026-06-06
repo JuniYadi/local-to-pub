@@ -1,6 +1,6 @@
 // packages/client/lib/upgrade.test.ts
 import { test, expect, describe } from "bun:test";
-import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch } from "./upgrade";
+import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch, downloadAndExtract } from "./upgrade";
 
 describe("Upgrade", () => {
   describe("getBinaryPath", () => {
@@ -55,6 +55,12 @@ describe("Upgrade", () => {
     test("returns amd64 or arm64", () => {
       const arch = detectArch();
       expect(["amd64", "arm64"]).toContain(arch);
+    });
+  });
+
+  describe("downloadAndExtract", () => {
+    test("is a function", () => {
+      expect(typeof downloadAndExtract).toBe("function");
     });
   });
 });

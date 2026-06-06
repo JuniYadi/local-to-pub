@@ -94,3 +94,59 @@ export async function getLatestVersion(): Promise<string> {
 
   return version;
 }
+
+export async function downloadAndExtract(
+  url: string,
+  targetPath: string
+): Promise<void> {
+  const { mkdtemp, rm, readdir, chmod, copyFile } = await import("fs/promises");
+  const { tmpdir } = await import("os");
+  const { join } = await import("path");
+  const { execSync } = await import("child_process");
+
+  const tmpDir = await mkdtemp(join(tmpdir(), "ltp-upgrade-"));
+  
+  try {
+    // Download
+    console.log("  Downloading...");
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`Download failed: ${response.status} ${response.statusText}`);
+    }
+    
+    const tarballPath = join(tmpDir, "release.tar.gz");
+    const buffer = Buffer.from(await response.arrayBuffer());
+    
+    if (buffer.length === 0) {
+      throw new Error("Downloaded file is empty");
+    }
+    
+    await Bun.write(tarballPath, buffer);
+    
+    // Extract
+    console.log("  Extracting...");
+    execSync(`tar -xzf "${tarballPath}" -C "${tmpDir}"`, {
+      stdio: "pipe",
+    });
+    
+    // Find binary
+    const files = await readdir(tmpDir);
+    const binaryFile = files.find(f => f.startsWith("local-to-pub") && !f.endsWith(".tar.gz"));
+    
+    if (!binaryFile) {
+      throw new Error("Binary not found in archive");
+    }
+    
+    const extractedPath = join(tmpDir, binaryFile);
+    
+    // Copy to target
+    console.log("  Installing...");
+    await copyFile(extractedPath, targetPath);
+    await chmod(targetPath, 0o755);
+    
+  } finally {
+    // Cleanup
+    await rm(tmpDir, { recursive: true, force: true });
+  }
+}
