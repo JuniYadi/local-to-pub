@@ -69,6 +69,11 @@ export BASE_DOMAIN="tunnel.example.com"
    ltp --port 3000
    ```
 
+5. **Upgrade later**:
+   ```bash
+   local-to-pub --upgrade
+   ```
+
 ## Admin Panel
 
 Access at `http://your-server/` after configuring admin credentials.
@@ -116,6 +121,8 @@ bun run build:server
 local-to-pub --port <port>         # Local port (default: 3000)
 local-to-pub --uri <subdomain>     # Request a specific subdomain
 local-to-pub --host-header <host>  # Override Host header
+local-to-pub --version             # Show client version
+local-to-pub --upgrade             # Upgrade client in place
 ```
 
 ### Server

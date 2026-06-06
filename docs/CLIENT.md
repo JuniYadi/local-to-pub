@@ -48,6 +48,8 @@ You can configure the client using command-line arguments, environment variables
 | `--host` | `-h` | `localhost` | Local host to forward to |
 | `--server` | `-s` | - | Server WebSocket URL |
 | `--token` | `-t` | - | Authentication token |
+| `--version` | `-v` | - | Show installed client version |
+| `--upgrade` | | - | Upgrade the installed client binary |
 | `--help` | | - | Show help message |
 
 ### Environment Variables
@@ -62,6 +64,11 @@ export TUNNEL_TOKEN="your-auth-token"
 Then you can just run:
 ```bash
 tunnel --port 8080
+```
+
+To upgrade an installed client later:
+```bash
+local-to-pub --upgrade
 ```
 
 ### Configuration File (Persistent)

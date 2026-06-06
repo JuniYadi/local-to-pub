@@ -11,6 +11,9 @@ import {
   type RequestMessage,
 } from "./lib/protocol";
 import { embeddedFrontendJs, embeddedFrontendCss, embeddedFrontendHtml } from "./lib/embedded-frontend";
+import packageJson from "../../package.json";
+
+declare const VERSION: string | undefined;
 
 // Configuration
 const PORT = Number(Bun.env.PORT) || 3000;
@@ -23,14 +26,14 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 12;
 const SESSION_COOKIE = "admin_session";
 const FRONTEND_PREFIX = "/static/";
 const FRONTEND_ENTRYPOINT = new URL("./frontend.tsx", import.meta.url);
-const VERSION = "0.0.10";
+const APP_VERSION = typeof VERSION !== "undefined" && VERSION ? VERSION : packageJson.version;
 
 // Parse CLI arguments for --claim-subdomain flag
 let ALLOW_CUSTOM_SUBDOMAINS = (Bun.env.ALLOW_CUSTOM_SUBDOMAINS ?? "true") === "true";
 const cliArgs = process.argv.slice(2);
 
 if (cliArgs.includes("--version") || cliArgs.includes("-v")) {
-  console.log(`local-to-pub-server v${VERSION}`);
+  console.log(`local-to-pub-server v${APP_VERSION}`);
   process.exit(0);
 }
 const claimSubdomainArg = cliArgs.find(arg => arg.startsWith("--claim-subdomain="));

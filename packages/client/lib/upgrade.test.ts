@@ -1,7 +1,19 @@
 // packages/client/lib/upgrade.test.ts
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, afterEach } from "bun:test";
 import { getBinaryPath, getDownloadUrl, getCurrentVersion, getLatestVersion, detectOS, detectArch, downloadAndExtract, upgrade } from "./upgrade";
+import { parseVersionOutput, getAppVersion } from "./version";
 import { existsSync } from "fs";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { join } from "path";
+import { tmpdir } from "os";
+
+const tempDirs: string[] = [];
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    rmSync(tempDirs.pop()!, { recursive: true, force: true });
+  }
+});
 
 describe("Upgrade", () => {
   describe("getBinaryPath", () => {
@@ -34,9 +46,21 @@ describe("Upgrade", () => {
   describe("getCurrentVersion", () => {
     const binaryPath = getBinaryPath(false);
     const binaryExists = existsSync(binaryPath);
-    
-    test.skipIf(!binaryExists)("returns version string from binary", async () => {
-      const version = await getCurrentVersion();
+
+    test("returns version string from provided binary path", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "ltp-version-test-"));
+      tempDirs.push(dir);
+
+      const fakeBinary = join(dir, "local-to-pub");
+      writeFileSync(fakeBinary, "#!/bin/sh\necho 'local-to-pub v1.2.3'\n");
+      chmodSync(fakeBinary, 0o755);
+
+      const version = await getCurrentVersion(fakeBinary);
+      expect(version).toBe("1.2.3");
+    });
+
+    test.skipIf(!binaryExists)("returns version string from installed binary", async () => {
+      const version = await getCurrentVersion(binaryPath);
       expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     });
   });
@@ -70,6 +94,17 @@ describe("Upgrade", () => {
     test("throws on download failure", async () => {
       await expect(downloadAndExtract("https://invalid.example.com/fake.tar.gz", "/tmp/test"))
         .rejects.toThrow();
+    });
+  });
+
+  describe("version helpers", () => {
+    test("parseVersionOutput extracts semver from cli output", () => {
+      expect(parseVersionOutput("local-to-pub v0.0.17")).toBe("0.0.17");
+      expect(parseVersionOutput("0.0.17")).toBe("0.0.17");
+    });
+
+    test("getAppVersion returns a semver string", () => {
+      expect(getAppVersion()).toMatch(/^\d+\.\d+\.\d+$/);
     });
   });
 

@@ -156,4 +156,62 @@ describe("HTTP Proxy", () => {
     expect(result.status).toBe(307);
     expect(result.headers["location"]).toBe("https://pgreen.tunnel.juniyadi.id/id/login/start?next=%2Fid&provider=github");
   });
+
+  test("rewrites trailing-slash redirects without auto-following them", async () => {
+    let calls = 0;
+
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async (_input, init) => {
+      calls++;
+      expect(init?.redirect).toBe("manual");
+
+      return new Response(null, {
+        status: 307,
+        headers: { "Location": "http://localhost:3000/id/" },
+      });
+    };
+
+    const result = await proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/id",
+      headers: {
+        "x-forwarded-host": "demo.tunnel.example.com",
+        "x-forwarded-proto": "https"
+      },
+      body: "",
+    });
+
+    expect(calls).toBe(1);
+    expect(result.status).toBe(307);
+    expect(result.headers["location"]).toBe("https://demo.tunnel.example.com/id/");
+  });
+
+  test("rewrites relative trailing-slash redirects to the public URL", async () => {
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async (_input, init) => {
+      expect(init?.redirect).toBe("manual");
+
+      return new Response(null, {
+        status: 308,
+        headers: { "Location": "/id/" },
+      });
+    };
+
+    const result = await proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/id",
+      headers: {
+        "x-forwarded-host": "demo.tunnel.example.com",
+        "x-forwarded-proto": "https"
+      },
+      body: "",
+    });
+
+    expect(result.status).toBe(308);
+    expect(result.headers["location"]).toBe("https://demo.tunnel.example.com/id/");
+  });
 });

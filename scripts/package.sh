@@ -4,7 +4,7 @@ set -e
 # Usage: ./package.sh [version]
 # If version not provided, reads from package.json
 
-VERSION=${1:-$(node -p "require('./package.json').version")}
+VERSION=${1:-$(bun -e 'const pkg = await import("./package.json", { with: { type: "json" } }); console.log(pkg.default.version);')}
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 ARTIFACTS_DIR="$ROOT_DIR/artifacts"

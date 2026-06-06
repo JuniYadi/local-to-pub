@@ -2,6 +2,7 @@
 import { homedir, platform, arch, tmpdir } from "os";
 import { join } from "path";
 import { mkdtemp, rm, readdir, chmod, copyFile, mkdir } from "fs/promises";
+import { parseVersionOutput } from "./version";
 
 export const REPO = "JuniYadi/local-to-pub";
 export const BASE_URL = `https://github.com/${REPO}/releases`;
@@ -18,9 +19,7 @@ export function getDownloadUrl(version: string, os: string, arch: string): strin
   return `${BASE_URL}/download/v${version}/${filename}`;
 }
 
-export async function getCurrentVersion(): Promise<string> {
-  const binaryPath = getBinaryPath(false);
-
+export async function getCurrentVersion(binaryPath = getBinaryPath(false)): Promise<string> {
   try {
     const proc = Bun.spawn([binaryPath, "--version"], {
       stdout: "pipe",
@@ -28,15 +27,7 @@ export async function getCurrentVersion(): Promise<string> {
     });
 
     const output = await new Response(proc.stdout).text();
-    const trimmed = output.trim();
-    
-    // Handle format like "local-to-pub v0.0.10" or just "0.0.10"
-    const match = trimmed.match(/(\d+\.\d+\.\d+)/);
-    if (!match) {
-      throw new Error(`Invalid version format: ${trimmed}`);
-    }
-    
-    return match[1];
+    return parseVersionOutput(output);
   } catch (error) {
     throw new Error(`Failed to get current version: ${(error as Error).message}`);
   }
@@ -159,10 +150,12 @@ export async function upgrade(options: UpgradeOptions): Promise<void> {
   console.log("Checking for updates...");
   console.log("");
   
+  const targetPath = getBinaryPath(global);
+
   // Get current version
   let currentVersion: string;
   try {
-    currentVersion = await getCurrentVersion();
+    currentVersion = await getCurrentVersion(targetPath);
   } catch (error) {
     console.error(`✗ Failed to get current version: ${(error as Error).message}`);
     process.exit(1);
@@ -186,9 +179,7 @@ export async function upgrade(options: UpgradeOptions): Promise<void> {
   console.log(`→ Update available: ${currentVersion} → ${latestVersion}`);
   console.log("");
   
-  // Determine target path
-  const targetPath = getBinaryPath(global);
-  
+
   // Check permissions
   try {
     // Test write permission by checking directory
@@ -220,7 +211,7 @@ export async function upgrade(options: UpgradeOptions): Promise<void> {
   // Verify
   console.log("");
   try {
-    const newVersion = await getCurrentVersion();
+    const newVersion = await getCurrentVersion(targetPath);
     if (newVersion === latestVersion) {
       console.log(`✓ Successfully upgraded to v${latestVersion}`);
     } else {
