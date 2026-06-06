@@ -1,6 +1,6 @@
 // packages/client/lib/upgrade.test.ts
 import { test, expect, describe, mock, beforeEach, afterEach } from "bun:test";
-import { getCurrentVersion, getLatestVersion, getBinaryPath, getDownloadUrl } from "./upgrade";
+import { getBinaryPath, getDownloadUrl, getCurrentVersion } from "./upgrade";
 
 describe("Upgrade", () => {
   describe("getBinaryPath", () => {
@@ -27,6 +27,13 @@ describe("Upgrade", () => {
     test("constructs correct URL for linux amd64", () => {
       const url = getDownloadUrl("1.0.0", "linux", "amd64");
       expect(url).toContain("local-to-pub-client-linux-amd64-1.0.0.tar.gz");
+    });
+  });
+
+  describe("getCurrentVersion", () => {
+    test("returns version string from binary", async () => {
+      const version = await getCurrentVersion();
+      expect(version).toMatch(/^\d+\.\d+\.\d+$/);
     });
   });
 });

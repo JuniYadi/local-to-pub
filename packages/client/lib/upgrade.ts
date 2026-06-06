@@ -16,3 +16,27 @@ export function getDownloadUrl(version: string, os: string, arch: string): strin
   const filename = `local-to-pub-client-${os}-${arch}-${version}.tar.gz`;
   return `${BASE_URL}/download/v${version}/${filename}`;
 }
+
+export async function getCurrentVersion(): Promise<string> {
+  const binaryPath = getBinaryPath(false);
+
+  try {
+    const proc = Bun.spawn([binaryPath, "--version"], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const output = await new Response(proc.stdout).text();
+    const trimmed = output.trim();
+    
+    // Handle format like "local-to-pub v0.0.10" or just "0.0.10"
+    const match = trimmed.match(/(\d+\.\d+\.\d+)/);
+    if (!match) {
+      throw new Error(`Invalid version format: ${trimmed}`);
+    }
+    
+    return match[1];
+  } catch (error) {
+    throw new Error(`Failed to get current version: ${(error as Error).message}`);
+  }
+}
