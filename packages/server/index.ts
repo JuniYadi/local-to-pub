@@ -517,12 +517,19 @@ const server = Bun.serve<WebSocketData>({
     const requestId = Bun.randomUUIDv7();
     const body = req.body ? Buffer.from(await req.arrayBuffer()).toString("base64") : "";
 
+    const headers = Object.fromEntries(req.headers.entries());
+    
+    // Add X-Forwarded headers
+    headers["x-forwarded-host"] = host;
+    headers["x-forwarded-proto"] = url.protocol.replace(":", "");
+    headers["x-forwarded-for"] = server.requestIP(req)?.address || "";
+
     const requestMsg: RequestMessage = {
       type: "request",
       requestId,
       method: req.method,
       path: url.pathname + url.search,
-      headers: Object.fromEntries(req.headers.entries()),
+      headers,
       body,
     };
 

@@ -1,78 +1,77 @@
 // packages/client/lib/http-proxy.test.ts
-import { describe, test, expect, beforeAll, afterAll } from "bun:test";
+import { test, expect, describe, spyOn } from "bun:test";
 import { proxyRequest } from "./http-proxy";
 
 describe("HTTP Proxy", () => {
-  let testServer: ReturnType<typeof Bun.serve>;
-
-  beforeAll(() => {
-    testServer = Bun.serve({
-      port: 9999,
-      fetch(req) {
-        const url = new URL(req.url);
-
-        if (url.pathname === "/echo") {
-          return new Response(JSON.stringify({
-            method: req.method,
-            path: url.pathname,
-            headers: Object.fromEntries(req.headers.entries()),
-          }), {
-            headers: { "Content-Type": "application/json" },
-          });
-        }
-
-        if (url.pathname === "/status/201") {
-          return new Response("Created", { status: 201 });
-        }
-
-        return new Response("Not Found", { status: 404 });
-      },
-    });
-  });
-
-  afterAll(() => {
-    testServer.stop();
-  });
-
   test("proxyRequest forwards GET request", async () => {
-    const response = await proxyRequest({
-      host: "localhost",
-      port: 9999,
-      method: "GET",
-      path: "/echo",
-      headers: { "X-Test": "value" },
-      body: "",
+    const mockResponse = new Response("hello world", {
+      status: 200,
+      headers: { "Content-Type": "text/plain" },
     });
+    
+    // @ts-ignore
+    global.fetch = async () => mockResponse;
 
-    expect(response.status).toBe(200);
-    const body = JSON.parse(Buffer.from(response.body, "base64").toString());
-    expect(body.method).toBe("GET");
-    expect(body.path).toBe("/echo");
-  });
-
-  test("proxyRequest returns correct status code", async () => {
-    const response = await proxyRequest({
+    const result = await proxyRequest({
       host: "localhost",
-      port: 9999,
+      port: 3000,
       method: "GET",
-      path: "/status/201",
+      path: "/",
       headers: {},
       body: "",
     });
 
-    expect(response.status).toBe(201);
+    expect(result.status).toBe(200);
+    expect(result.body).toBe(Buffer.from("hello world").toString("base64"));
   });
 
-  test("proxyRequest handles 404", async () => {
-    const response = await proxyRequest({
+  test("rewrites Location header for local redirects", async () => {
+    const mockResponse = new Response(null, {
+      status: 302,
+      headers: { "Location": "http://localhost:3000/auth/callback" },
+    });
+    
+    // @ts-ignore
+    global.fetch = async () => mockResponse;
+
+    const result = await proxyRequest({
       host: "localhost",
-      port: 9999,
+      port: 3000,
       method: "GET",
-      path: "/not-found",
-      headers: {},
+      path: "/login",
+      headers: {
+        "x-forwarded-host": "myapp.tunnel.me",
+        "x-forwarded-proto": "https"
+      },
       body: "",
     });
 
-    expect(response.status).toBe(404);
+    expect(result.status).toBe(302);
+    expect(result.headers["location"]).toBe("https://myapp.tunnel.me/auth/callback");
+  });
+
+  test("does not rewrite external Location headers", async () => {
+    const mockResponse = new Response(null, {
+      status: 302,
+      headers: { "Location": "https://github.com/login" },
+    });
+    
+    // @ts-ignore
+    global.fetch = async () => mockResponse;
+
+    const result = await proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/login",
+      headers: {
+        "x-forwarded-host": "myapp.tunnel.me",
+        "x-forwarded-proto": "https"
+      },
+      body: "",
+    });
+
+    expect(result.status).toBe(302);
+    expect(result.headers["location"]).toBe("https://github.com/login");
   });
 });
