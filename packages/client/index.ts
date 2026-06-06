@@ -16,7 +16,8 @@ const { values } = parseArgs({
     version: { type: "boolean", short: "v", default: false },
     help: { type: "boolean", default: false },
   },
-  strict: true,
+  allowPositionals: true,
+  strict: false,
 });
 
 const VERSION = "0.0.10";
