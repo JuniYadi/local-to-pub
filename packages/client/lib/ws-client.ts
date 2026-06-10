@@ -8,6 +8,7 @@ export interface TunnelClientOptions {
   localPort: number;
   hostHeader?: string;
   requestedSubdomain?: string;
+  force?: boolean;
   onConnected?: (url: string) => void;
   onDisconnected?: () => void;
   onError?: (error: Error) => void;
@@ -39,12 +40,15 @@ export class TunnelClient {
       this.ws.onopen = () => {
         this.reconnectAttempts = 0;
         // Send auth message
-        const authMessage: { type: string; token: string; requestedSubdomain?: string } = {
+        const authMessage: { type: string; token: string; requestedSubdomain?: string; force?: boolean } = {
           type: "auth",
           token: this.options.token,
         };
         if (this.options.requestedSubdomain) {
           authMessage.requestedSubdomain = this.options.requestedSubdomain;
+        }
+        if (this.options.force) {
+          authMessage.force = true;
         }
         this.ws?.send(JSON.stringify(authMessage));
       };
@@ -79,6 +83,11 @@ export class TunnelClient {
 
         if (msg.type === "ws_close") {
           this.handleWSClose(msg.requestId as string);
+        }
+
+        if (msg.type === "ping") {
+          // Respond to server keepalive ping
+          this.ws?.send(JSON.stringify({ type: "pong" }));
         }
       };
 

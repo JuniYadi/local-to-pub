@@ -177,6 +177,32 @@ function App() {
     }
   }
 
+  async function handleDisconnect(subdomain: string) {
+    if (!confirm(`Force-disconnect subdomain "${subdomain}"? This will close the active tunnel.`)) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/connections/disconnect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ subdomain }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Disconnect failed.");
+        setBusy(false);
+        return;
+      }
+      await loadConnections();
+    } catch {
+      setError("Disconnect failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -490,6 +516,7 @@ function App() {
                             <th>Token ID</th>
                             <th>Connected</th>
                             <th>Duration</th>
+                            <th></th>
                           </tr>
                         </thead>
                         <tbody>
@@ -499,6 +526,16 @@ function App() {
                               <td>#{conn.token_id}</td>
                               <td>{formatDate(new Date(conn.connected_at).toISOString())}</td>
                               <td>{formatDuration(conn.connected_at, null)}</td>
+                              <td>
+                                <button
+                                  type="button"
+                                  className="ghost danger"
+                                  onClick={() => void handleDisconnect(conn.subdomain)}
+                                  disabled={busy}
+                                >
+                                  Disconnect
+                                </button>
+                              </td>
                             </tr>
                           ))}
                         </tbody>

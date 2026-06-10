@@ -73,6 +73,7 @@ interface WebSocketData {
   type: "control" | "tunnel";
   wsRequestId?: string;
   path?: string;
+  lastActivity: number;
 }
 
 interface SessionPayload {
@@ -286,7 +287,7 @@ const server = Bun.serve<WebSocketData>({
       if (url.pathname === "/tunnel") {
         // Upgrade to WebSocket
         const upgraded = server.upgrade(req, {
-          data: { authenticated: false, type: "control" },
+          data: { authenticated: false, type: "control", lastActivity: Date.now() },
         });
         if (!upgraded) {
           return new Response("WebSocket upgrade failed", { status: 400 });
@@ -462,6 +463,42 @@ const server = Bun.serve<WebSocketData>({
         return Response.json({ live, past });
       }
 
+      if (url.pathname === "/api/connections/disconnect" && req.method === "POST") {
+        const configError = ensureAdminConfigured();
+        if (configError) {
+          return Response.json({ error: configError }, { status: 500 });
+        }
+        const session = getSession(req);
+        if (!session) {
+          return Response.json({ error: "Unauthorized." }, { status: 401 });
+        }
+        let body: { subdomain?: string } = {};
+        try {
+          body = (await req.json()) as { subdomain?: string };
+        } catch {
+          return Response.json({ error: "Invalid JSON body." }, { status: 400 });
+        }
+        if (!body.subdomain) {
+          return Response.json({ error: "Missing subdomain." }, { status: 400 });
+        }
+
+        const ws = tunnelManager.getConnection(body.subdomain);
+        if (!ws) {
+          return Response.json({ error: "No active connection for this subdomain." }, { status: 404 });
+        }
+
+        const existingData = ws.data as WebSocketData;
+        if (existingData.connectionId) {
+          recordDisconnection(db, existingData.connectionId);
+        }
+
+        tunnelManager.closeConnection(body.subdomain);
+        await tunnelStore.unregister(body.subdomain);
+
+        console.log(`Admin force-disconnected: ${body.subdomain}`);
+        return Response.json({ ok: true });
+      }
+
       const deleteTokenMatch = url.pathname.match(/^\/api\/tokens\/(\d+)$/);
       if (req.method === "DELETE" && deleteTokenMatch) {
         const configError = ensureAdminConfigured();
@@ -502,6 +539,7 @@ const server = Bun.serve<WebSocketData>({
           subdomain,
           wsRequestId,
           path: url.pathname + url.search, // Store path for the 'open' event
+          lastActivity: Date.now(),
         },
       });
       if (!upgraded) {
@@ -601,6 +639,7 @@ const server = Bun.serve<WebSocketData>({
 
     async message(ws, message) {
       const data = ws.data;
+      data.lastActivity = Date.now();
 
       if (data.type === "tunnel") {
         const controlWs = tunnelManager.getConnection(data.subdomain!);
@@ -653,7 +692,7 @@ const server = Bun.serve<WebSocketData>({
             return;
           }
 
-          // Force unregister if the SAME token is trying to reconnect to the SAME subdomain
+          // Check if subdomain is already in use
           const existingWS = tunnelManager.getConnection(parsed.requestedSubdomain);
           if (existingWS) {
             const existingData = existingWS.data as WebSocketData;
@@ -665,6 +704,19 @@ const server = Bun.serve<WebSocketData>({
               existingWS.close();
               tunnelManager.unregisterConnection(parsed.requestedSubdomain);
               await tunnelStore.unregister(parsed.requestedSubdomain);
+            } else if (parsed.force && existingWS.readyState !== WebSocket.OPEN) {
+              console.log(`Force-taking dead subdomain: ${parsed.requestedSubdomain}. Closing stale connection.`);
+              if (existingData.connectionId) {
+                recordDisconnection(db, existingData.connectionId);
+              }
+              existingWS.close();
+              tunnelManager.unregisterConnection(parsed.requestedSubdomain);
+              await tunnelStore.unregister(parsed.requestedSubdomain);
+            } else if (parsed.force) {
+              // Connection is still alive - force not allowed
+              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain is currently active. Use admin dashboard to disconnect it first." }));
+              ws.close();
+              return;
             } else {
               ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
               ws.close();
@@ -676,7 +728,7 @@ const server = Bun.serve<WebSocketData>({
         } else if (tokenRecord.subdomain) {
           subdomain = tokenRecord.subdomain;
 
-          // Force unregister if the SAME token is trying to reconnect
+          // Check if persistent subdomain is already in use
           const existingWS = tunnelManager.getConnection(subdomain);
           if (existingWS) {
             const existingData = existingWS.data as WebSocketData;
@@ -688,6 +740,19 @@ const server = Bun.serve<WebSocketData>({
               existingWS.close();
               tunnelManager.unregisterConnection(subdomain);
               await tunnelStore.unregister(subdomain);
+            } else if (parsed.force && existingWS.readyState !== WebSocket.OPEN) {
+              console.log(`Force-taking dead persistent subdomain: ${subdomain}. Closing stale connection.`);
+              if (existingData.connectionId) {
+                recordDisconnection(db, existingData.connectionId);
+              }
+              existingWS.close();
+              tunnelManager.unregisterConnection(subdomain);
+              await tunnelStore.unregister(subdomain);
+            } else if (parsed.force) {
+              // Connection is still alive - force not allowed
+              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain is currently active. Use admin dashboard to disconnect it first." }));
+              ws.close();
+              return;
             } else {
               ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
               ws.close();
@@ -767,6 +832,18 @@ const server = Bun.serve<WebSocketData>({
           tunnelManager.unregisterBrowserConnection(parsed.requestId);
         }
       }
+
+      if (parsed.type === "pong") {
+        // Application-level pong received (response to server ping)
+        // lastActivity already updated above
+      }
+    },
+
+    pong(_ws) {
+      // WebSocket-level pong received (response to ws.ping())
+      // Intentionally NOT updating lastActivity here — auto-pong from the TCP stack
+      // doesn't indicate the application is alive. Only application-level messages
+      // (responses, app-level pong, etc.) count as activity.
     },
 
     async close(ws) {
@@ -795,3 +872,53 @@ const server = Bun.serve<WebSocketData>({
 
 console.log(`Server running on http://${server.hostname}:${server.port}`);
 console.log(`Base domain: ${BASE_DOMAIN}`);
+
+// ── Ping / keepalive ──
+// Send application-level ping messages every 30 seconds to all control connections.
+// The client must respond with { type: "pong" } in its message handler.
+// This detects hung clients where TCP is alive but the app is stuck.
+// If the WebSocket itself is closed, the close handler will clean up.
+const PING_INTERVAL_MS = 30000;
+const pingTimer = setInterval(() => {
+  for (const subdomain of tunnelManager.getActiveSubdomains()) {
+    const ws = tunnelManager.getConnection(subdomain);
+    if (ws) {
+      try { ws.send(serializeServerMessage({ type: "ping" })); } catch { /* connection may be closed */ }
+    }
+  }
+}, PING_INTERVAL_MS);
+
+// ── Inactivity cleanup ──
+// Every 60 seconds, close connections that have been inactive for > 10 minutes.
+// "Inactive" means no message received from the client (including pong responses).
+const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const CLEANUP_INTERVAL_MS = 60000;
+const cleanupTimer = setInterval(async () => {
+  const now = Date.now();
+  for (const subdomain of tunnelManager.getActiveSubdomains()) {
+    const ws = tunnelManager.getConnection(subdomain);
+    if (!ws) continue;
+    const data = ws.data as WebSocketData;
+    const idleMs = now - data.lastActivity;
+    if (idleMs >= INACTIVITY_TIMEOUT_MS) {
+      console.log(`Closing inactive tunnel: ${subdomain} (idle ${Math.round(idleMs / 1000)}s)`);
+      if (data.connectionId) {
+        recordDisconnection(db, data.connectionId);
+      }
+      tunnelManager.closeConnection(subdomain);
+      await tunnelStore.unregister(subdomain);
+    }
+  }
+}, CLEANUP_INTERVAL_MS);
+
+// Allow garbage collection on shutdown
+process.on("SIGINT", () => {
+  clearInterval(pingTimer);
+  clearInterval(cleanupTimer);
+  process.exit(0);
+});
+process.on("SIGTERM", () => {
+  clearInterval(pingTimer);
+  clearInterval(cleanupTimer);
+  process.exit(0);
+});
