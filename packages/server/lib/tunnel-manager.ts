@@ -110,4 +110,38 @@ export class TunnelManager {
   getConnectionCount(): number {
     return this.connections.size;
   }
+
+  getActiveSubdomains(): string[] {
+    return Array.from(this.connections.keys());
+  }
+
+  /**
+   * Force-close a connection and remove it from all internal maps.
+   * Returns true if a connection was found and closed.
+   */
+  closeConnection(subdomain: string): boolean {
+    const ws = this.connections.get(subdomain);
+    if (!ws) return false;
+
+    // Close all associated browser connections
+    for (const [wsRequestId, conn] of this.browserConnections) {
+      if (conn.subdomain === subdomain) {
+        conn.ws.close();
+        this.browserConnections.delete(wsRequestId);
+      }
+    }
+
+    // Reject all pending requests for this subdomain
+    for (const [requestId, pending] of this.pendingRequests) {
+      if (pending.subdomain === subdomain) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error("Tunnel disconnected"));
+        this.pendingRequests.delete(requestId);
+      }
+    }
+
+    try { ws.close(); } catch { /* ignore */ }
+    this.connections.delete(subdomain);
+    return true;
+  }
 }

@@ -13,6 +13,7 @@ const { values } = parseArgs({
     server: { type: "string", short: "s" },
     token: { type: "string", short: "t" },
     uri: { type: "string", short: "y" },
+    force: { type: "boolean", default: false },
     "host-header": { type: "string" },
     version: { type: "boolean", short: "v", default: false },
     upgrade: { type: "boolean", default: false },
@@ -47,6 +48,7 @@ Options:
   -s, --server <url>    Server WebSocket URL (or set TUNNEL_SERVER)
   -t, --token <token>   Auth token (or set TUNNEL_TOKEN)
   -y, --uri <subdomain> Request specific subdomain (optional)
+  --force               Force-take a subdomain even if already in use
   -v, --version         Show client version
   --upgrade             Upgrade to latest version
   --global              Install/upgrade to system-wide directory (/usr/local/bin)
@@ -87,6 +89,7 @@ async function main() {
     localHost,
     localPort,
     hostHeader,
+    force: !!values.force,
     requestedSubdomain: values.uri,
     onConnected: (url) => {
       console.log(`\n✓ Tunnel active: ${url}`);

@@ -5,6 +5,7 @@ export interface AuthMessage {
   type: "auth";
   token: string;
   requestedSubdomain?: string;
+  force?: boolean;
 }
 
 export interface ResponseMessage {
@@ -20,7 +21,11 @@ export interface WSReadyMessage {
   requestId: string;
 }
 
-export type ClientMessage = AuthMessage | ResponseMessage | WSReadyMessage | WSDataMessage | WSCloseMessage;
+export interface PongMessage {
+  type: "pong";
+}
+
+export type ClientMessage = AuthMessage | ResponseMessage | WSReadyMessage | WSDataMessage | WSCloseMessage | PongMessage;
 
 // Server → Client messages
 export interface AuthOkMessage {
@@ -61,7 +66,11 @@ export interface WSCloseMessage {
   requestId: string;
 }
 
-export type ServerMessage = AuthOkMessage | AuthErrorMessage | RequestMessage | WSOpenMessage | WSDataMessage | WSCloseMessage;
+export interface PingMessage {
+  type: "ping";
+}
+
+export type ServerMessage = AuthOkMessage | AuthErrorMessage | RequestMessage | WSOpenMessage | WSDataMessage | WSCloseMessage | PingMessage;
 
 // Helper functions
 export function parseClientMessage(data: string): ClientMessage | null {
@@ -85,6 +94,9 @@ export function parseClientMessage(data: string): ClientMessage | null {
     }
     if (msg.type === "ws_close" && typeof msg.requestId === "string") {
       return msg as WSCloseMessage;
+    }
+    if (msg.type === "pong") {
+      return msg as PongMessage;
     }
     return null;
   } catch {
