@@ -203,6 +203,28 @@ function App() {
     }
   }
 
+  async function handleDisconnectAll() {
+    if (!confirm(`Disconnect all ${connections.live.length} active tunnels?`)) {
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/connections/disconnect-all", { method: "POST" });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "Disconnect all failed.");
+        setBusy(false);
+        return;
+      }
+      await loadConnections();
+    } catch {
+      setError("Disconnect all failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -506,7 +528,19 @@ function App() {
                   <Inspector />
                 ) : activeTab === "connections" ? (
                   <>
-                    <h3 className="section-title">Live Connections ({connections.live.length})</h3>
+                    <div className="section-title-row">
+                      <h3 className="section-title">Live Connections ({connections.live.length})</h3>
+                      {connections.live.length > 0 && (
+                        <button
+                          type="button"
+                          className="ghost danger small"
+                          onClick={() => void handleDisconnectAll()}
+                          disabled={busy}
+                        >
+                          Disconnect All
+                        </button>
+                      )}
+                    </div>
                     {connections.live.length === 0 && <div className="empty">No live connections.</div>}
                     {connections.live.length > 0 && (
                       <table className="connections-table">

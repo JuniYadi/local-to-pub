@@ -499,6 +499,39 @@ const server = Bun.serve<WebSocketData>({
         return Response.json({ ok: true });
       }
 
+      if (url.pathname === "/api/connections/disconnect-all" && req.method === "POST") {
+        const configError = ensureAdminConfigured();
+        if (configError) {
+          return Response.json({ error: configError }, { status: 500 });
+        }
+        const session = getSession(req);
+        if (!session) {
+          return Response.json({ error: "Unauthorized." }, { status: 401 });
+        }
+
+        const subdomains = tunnelManager.getActiveSubdomains();
+        if (subdomains.length === 0) {
+          return Response.json({ ok: true, disconnected: 0 });
+        }
+
+        let count = 0;
+        for (const subdomain of subdomains) {
+          const ws = tunnelManager.getConnection(subdomain);
+          if (ws) {
+            const existingData = ws.data as WebSocketData;
+            if (existingData.connectionId) {
+              recordDisconnection(db, existingData.connectionId);
+            }
+            tunnelManager.closeConnection(subdomain);
+            await tunnelStore.unregister(subdomain);
+            count++;
+            console.log(`Admin force-disconnected: ${subdomain}`);
+          }
+        }
+
+        return Response.json({ ok: true, disconnected: count });
+      }
+
       const deleteTokenMatch = url.pathname.match(/^\/api\/tokens\/(\d+)$/);
       if (req.method === "DELETE" && deleteTokenMatch) {
         const configError = ensureAdminConfigured();
