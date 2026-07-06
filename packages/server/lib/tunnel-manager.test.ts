@@ -1,7 +1,7 @@
 // packages/server/lib/tunnel-manager.test.ts
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import type { ServerWebSocket } from "bun";
-import { TunnelManager } from "./tunnel-manager";
+import { TunnelManager, REQUEST_TIMEOUT_ERROR } from "./tunnel-manager";
 
 // Mock WebSocket interface for tests
 interface MockWebSocket {
@@ -55,5 +55,56 @@ describe("TunnelManager", () => {
     // Promise should resolve with the response
     const response = await responsePromise;
     expect(response.status).toBe(200);
+  });
+
+  test("buffered messages are held until markBrowserConnectionReady", () => {
+    const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    manager.registerBrowserConnection("ws-1", "abc123", mockWs);
+
+    const r1 = manager.queueBrowserMessage("ws-1", "msg1");
+    expect(r1).toEqual({ subdomain: "abc123", ready: false });
+
+    const r2 = manager.queueBrowserMessage("ws-1", "msg2");
+    expect(r2).toEqual({ subdomain: "abc123", ready: false });
+
+    const ready = manager.markBrowserConnectionReady("ws-1");
+    expect(ready).toEqual({ subdomain: "abc123", messages: ["msg1", "msg2"] });
+  });
+
+  test("queueBrowserMessage returns ready: true when connection is ready", () => {
+    const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    manager.registerBrowserConnection("ws-1", "abc123", mockWs);
+    manager.markBrowserConnectionReady("ws-1");
+
+    const result = manager.queueBrowserMessage("ws-1", "msg");
+    expect(result).toEqual({ subdomain: "abc123", ready: true });
+  });
+
+  test("queueBrowserMessage closes connection when buffer exceeds 100 messages", () => {
+    const mockWs = { send: mock(() => {}), close: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    manager.registerBrowserConnection("ws-1", "abc123", mockWs);
+
+    // Fill buffer to 100
+    for (let i = 0; i < 100; i++) {
+      const result = manager.queueBrowserMessage("ws-1", `msg${i}`);
+      expect(result).toEqual({ subdomain: "abc123", ready: false });
+    }
+    // 101st triggers close
+    const result = manager.queueBrowserMessage("ws-1", "overflow");
+    expect(result).toBeNull();
+  });
+
+  test("queueBrowserMessage returns null for nonexistent connection", () => {
+    const result = manager.queueBrowserMessage("nonexistent", "msg");
+    expect(result).toBeNull();
+  });
+
+  test("markBrowserConnectionReady returns null for nonexistent connection", () => {
+    const result = manager.markBrowserConnectionReady("nonexistent");
+    expect(result).toBeNull();
+  });
+
+  test("REQUEST_TIMEOUT_ERROR constant is exported", () => {
+    expect(REQUEST_TIMEOUT_ERROR).toBe("Request timeout");
   });
 });

@@ -3,7 +3,7 @@ import { EventEmitter } from "events";
 import { createToken, deleteToken, initDb, listTokens, updateSubdomain, validateToken, type TokenDb,
          initConnectionHistory, recordConnection, recordDisconnection, getLiveConnections, getPastConnections } from "./lib/db";
 import { TunnelStore } from "./lib/redis";
-import { TunnelManager } from "./lib/tunnel-manager";
+import { TunnelManager, REQUEST_TIMEOUT_ERROR } from "./lib/tunnel-manager";
 import { generateSubdomain, extractSubdomain, isValidSubdomain } from "./lib/subdomain";
 import {
   parseClientMessage,
@@ -637,7 +637,16 @@ const server = Bun.serve<WebSocketData>({
         status: response.status,
         headers: response.headers,
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof Error && error.message === REQUEST_TIMEOUT_ERROR && tunnelManager.getConnection(subdomain) === ws) {
+        const wsData = ws.data as WebSocketData;
+        if (wsData.connectionId) {
+          recordDisconnection(db, wsData.connectionId);
+        }
+        tunnelManager.closeConnection(subdomain);
+        await tunnelStore.unregister(subdomain);
+        console.log(`Closed unresponsive tunnel after request timeout: ${subdomain}`);
+      }
       return new Response("Gateway Timeout", { status: 504 });
     }
   },
@@ -675,12 +684,24 @@ const server = Bun.serve<WebSocketData>({
       data.lastActivity = Date.now();
 
       if (data.type === "tunnel") {
-        const controlWs = tunnelManager.getConnection(data.subdomain!);
+        const encodedData = typeof message === "string" ? Buffer.from(message).toString("base64") : Buffer.from(message).toString("base64");
+        const result = tunnelManager.queueBrowserMessage(data.wsRequestId!, encodedData);
+
+        if (!result) {
+          ws.close();
+          return;
+        }
+
+        if (!result.ready) {
+          return;
+        }
+
+        const controlWs = tunnelManager.getConnection(result.subdomain);
         if (controlWs) {
           controlWs.send(serializeServerMessage({
             type: "ws_data",
             requestId: data.wsRequestId!,
-            data: typeof message === "string" ? Buffer.from(message).toString("base64") : Buffer.from(message).toString("base64"),
+            data: encodedData,
           }));
         }
         return;
@@ -848,7 +869,26 @@ const server = Bun.serve<WebSocketData>({
       }
 
       if (parsed.type === "ws_ready") {
-        // Client is ready, we could flush buffered messages if we had any
+        const ready = tunnelManager.markBrowserConnectionReady(parsed.requestId);
+        if (!ready) return;
+
+        const controlWs = tunnelManager.getConnection(ready.subdomain);
+        if (!controlWs) {
+          const browserWs = tunnelManager.getBrowserConnection(parsed.requestId);
+          if (browserWs) {
+            browserWs.close();
+          }
+          tunnelManager.unregisterBrowserConnection(parsed.requestId);
+          return;
+        }
+
+        for (const data of ready.messages) {
+          controlWs.send(serializeServerMessage({
+            type: "ws_data",
+            requestId: parsed.requestId,
+            data,
+          }));
+        }
       }
 
       if (parsed.type === "ws_data") {
@@ -907,11 +947,12 @@ console.log(`Server running on http://${server.hostname}:${server.port}`);
 console.log(`Base domain: ${BASE_DOMAIN}`);
 
 // ── Ping / keepalive ──
-// Send application-level ping messages every 30 seconds to all control connections.
+// Send application-level ping messages every 15 seconds to all control connections.
 // The client must respond with { type: "pong" } in its message handler.
 // This detects hung clients where TCP is alive but the app is stuck.
-// If the WebSocket itself is closed, the close handler will clean up.
-const PING_INTERVAL_MS = 30000;
+const PING_INTERVAL_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 45_000;
+const HEARTBEAT_CHECK_INTERVAL_MS = 15_000;
 const pingTimer = setInterval(() => {
   for (const subdomain of tunnelManager.getActiveSubdomains()) {
     const ws = tunnelManager.getConnection(subdomain);
@@ -922,10 +963,8 @@ const pingTimer = setInterval(() => {
 }, PING_INTERVAL_MS);
 
 // ── Inactivity cleanup ──
-// Every 60 seconds, close connections that have been inactive for > 10 minutes.
+// Every 15 seconds, close connections that have been inactive for > 45 seconds.
 // "Inactive" means no message received from the client (including pong responses).
-const INACTIVITY_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
-const CLEANUP_INTERVAL_MS = 60000;
 const cleanupTimer = setInterval(async () => {
   const now = Date.now();
   for (const subdomain of tunnelManager.getActiveSubdomains()) {
@@ -933,8 +972,8 @@ const cleanupTimer = setInterval(async () => {
     if (!ws) continue;
     const data = ws.data as WebSocketData;
     const idleMs = now - data.lastActivity;
-    if (idleMs >= INACTIVITY_TIMEOUT_MS) {
-      console.log(`Closing inactive tunnel: ${subdomain} (idle ${Math.round(idleMs / 1000)}s)`);
+    if (idleMs >= HEARTBEAT_TIMEOUT_MS) {
+      console.log(`Closing unresponsive tunnel: ${subdomain} (no app-level message for ${Math.round(idleMs / 1000)}s)`);
       if (data.connectionId) {
         recordDisconnection(db, data.connectionId);
       }
@@ -942,7 +981,7 @@ const cleanupTimer = setInterval(async () => {
       await tunnelStore.unregister(subdomain);
     }
   }
-}, CLEANUP_INTERVAL_MS);
+}, HEARTBEAT_CHECK_INTERVAL_MS);
 
 // Allow garbage collection on shutdown
 process.on("SIGINT", () => {

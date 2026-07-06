@@ -1,4 +1,6 @@
 // packages/client/lib/http-proxy.ts
+export const LOCAL_REQUEST_TIMEOUT_MS = 25_000;
+
 export interface ProxyRequest {
   host: string;
   port: number;
@@ -7,6 +9,7 @@ export interface ProxyRequest {
   headers: Record<string, string>;
   body: string; // base64
   hostHeader?: string;
+  timeoutMs?: number;
 }
 
 export interface ProxyResponse {
@@ -68,12 +71,16 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
     headers.set("host", `${req.host}:${req.port}`);
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), req.timeoutMs ?? LOCAL_REQUEST_TIMEOUT_MS);
+
   try {
     const response = await fetch(url, {
       method: req.method,
       headers,
       body: req.body ? Buffer.from(req.body, "base64") : undefined,
       redirect: "manual",
+      signal: controller.signal,
     });
 
     const responseHeaders: Record<string, string> = {};
@@ -105,11 +112,20 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
       headers: responseHeaders,
       body: bodyBase64,
     };
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      return {
+        status: 504,
+        headers: { "Content-Type": "text/plain" },
+        body: Buffer.from("Local server timed out").toString("base64"),
+      };
+    }
     return {
       status: 502,
       headers: { "Content-Type": "text/plain" },
       body: Buffer.from("Failed to connect to local server").toString("base64"),
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
