@@ -1,7 +1,7 @@
 // packages/server/lib/tunnel-manager.test.ts
 import { describe, test, expect, beforeEach, mock } from "bun:test";
 import type { ServerWebSocket } from "bun";
-import { TunnelManager } from "./tunnel-manager";
+import { TunnelManager, REQUEST_TIMEOUT_ERROR } from "./tunnel-manager";
 
 // Mock WebSocket interface for tests
 interface MockWebSocket {
@@ -105,7 +105,6 @@ describe("TunnelManager", () => {
   });
 
   test("REQUEST_TIMEOUT_ERROR constant is exported", () => {
-    const { REQUEST_TIMEOUT_ERROR } = require("./tunnel-manager");
     expect(REQUEST_TIMEOUT_ERROR).toBe("Request timeout");
   });
 });

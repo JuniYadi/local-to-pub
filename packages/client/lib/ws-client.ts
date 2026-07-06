@@ -143,7 +143,7 @@ export class TunnelClient {
       }
 
       // Close all local WebSocket bridges before attempting reconnect
-      for (const [requestId, entry] of this.localWebSockets) {
+      for (const [_requestId, entry] of this.localWebSockets) {
         clearTimeout(entry.openTimer);
         try { entry.socket.close(); } catch { /* ignore */ }
       }
@@ -317,7 +317,7 @@ export class TunnelClient {
       this.reconnectTimer = null;
     }
     // Close all local WebSocket bridges
-    for (const [requestId, entry] of this.localWebSockets) {
+    for (const [_requestId, entry] of this.localWebSockets) {
       clearTimeout(entry.openTimer);
       try { entry.socket.close(); } catch { /* ignore */ }
     }

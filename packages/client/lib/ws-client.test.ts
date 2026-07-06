@@ -62,7 +62,7 @@ describe("TunnelClient", () => {
 
   function setupConnectedClient(): MockWebSocketInstance {
     client = new TunnelClient(defaultOptions);
-    const connectPromise = client.connect();
+    client.connect();
     const ws = MockWebSocket.instances[0];
 
     expect(ws).toBeDefined();
