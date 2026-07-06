@@ -214,4 +214,51 @@ describe("HTTP Proxy", () => {
     expect(result.status).toBe(308);
     expect(result.headers["location"]).toBe("https://demo.tunnel.example.com/id/");
   });
+
+  test("proxyRequest returns 504 when the local server exceeds the timeout", async () => {
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async (_url, init) => {
+      // Return a promise that will be aborted
+      return new Promise((_, reject) => {
+        const signal = init?.signal as AbortSignal;
+        signal.addEventListener("abort", () => {
+          const err = new Error("The operation was aborted");
+          err.name = "AbortError";
+          reject(err);
+        });
+      });
+    };
+
+    const result = await proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/slow",
+      headers: {},
+      body: "",
+      timeoutMs: 1,
+    });
+
+    expect(result.status).toBe(504);
+    expect(Buffer.from(result.body, "base64").toString()).toBe("Local server timed out");
+  });
+
+  test("proxyRequest returns 502 for local connection failures", async () => {
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+
+    const result = await proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/test",
+      headers: {},
+      body: "",
+    });
+
+    expect(result.status).toBe(502);
+    expect(Buffer.from(result.body, "base64").toString()).toBe("Failed to connect to local server");
+  });
 });
