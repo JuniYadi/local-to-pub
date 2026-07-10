@@ -19,6 +19,7 @@ declare const VERSION: string | undefined;
 const PORT = Number(Bun.env.PORT) || 3000;
 const BASE_DOMAIN = Bun.env.BASE_DOMAIN || "localhost:3000";
 const REDIS_URL = Bun.env.REDIS_URL || "redis://localhost:6379";
+const SERVER_IDLE_TIMEOUT_SECONDS = 130;
 const ADMIN_USERNAME = Bun.env.ADMIN_USERNAME || "";
 const ADMIN_PASSWORD = Bun.env.ADMIN_PASSWORD || "";
 const SESSION_SECRET = Bun.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
@@ -254,7 +255,7 @@ await buildFrontend();
 
 const server = Bun.serve<WebSocketData>({
   port: PORT,
-  idleTimeout: 60, // 60 seconds
+  idleTimeout: SERVER_IDLE_TIMEOUT_SECONDS, // 130 seconds
 
   async fetch(req, _server) {
     const url = new URL(req.url);

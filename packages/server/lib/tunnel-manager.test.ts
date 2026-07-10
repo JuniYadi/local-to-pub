@@ -1,7 +1,7 @@
 // packages/server/lib/tunnel-manager.test.ts
-import { describe, test, expect, beforeEach, mock } from "bun:test";
+import { describe, test, expect, beforeEach, afterEach, mock, jest } from "bun:test";
 import type { ServerWebSocket } from "bun";
-import { TunnelManager, REQUEST_TIMEOUT_ERROR } from "./tunnel-manager";
+import { TunnelManager, REQUEST_TIMEOUT_ERROR, TUNNEL_REQUEST_TIMEOUT_MS } from "./tunnel-manager";
 
 // Mock WebSocket interface for tests
 interface MockWebSocket {
@@ -13,6 +13,10 @@ describe("TunnelManager", () => {
 
   beforeEach(() => {
     manager = new TunnelManager();
+  });
+
+  afterEach(() => {
+    jest.useRealTimers();
   });
 
   test("registerConnection stores WebSocket by subdomain", () => {
@@ -106,5 +110,34 @@ describe("TunnelManager", () => {
 
   test("REQUEST_TIMEOUT_ERROR constant is exported", () => {
     expect(REQUEST_TIMEOUT_ERROR).toBe("Request timeout");
+  });
+  test("TUNNEL_REQUEST_TIMEOUT_MS is 125 seconds", () => {
+    expect(TUNNEL_REQUEST_TIMEOUT_MS).toBe(125_000);
+  });
+
+  test("waitForResponse stays pending through the client dev timeout window", async () => {
+    jest.useFakeTimers();
+
+    const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    manager.registerConnection("abc123", mockWs);
+
+    const requestId = crypto.randomUUID();
+    const responsePromise = manager.waitForResponse(requestId, "abc123");
+
+    // Advance past the old 30s timeout
+    jest.advanceTimersByTime(120_000);
+
+    // Request should still be pending (server waits 125s)
+    expect(manager.hasPendingRequest(requestId)).toBe(true);
+
+    // Resolve the request
+    manager.resolvePendingRequest(requestId, { status: 200, headers: {}, body: "" });
+
+    // Should no longer be pending
+    expect(manager.hasPendingRequest(requestId)).toBe(false);
+
+    // Promise should resolve with 200
+    const response = await responsePromise;
+    expect(response.status).toBe(200);
   });
 });

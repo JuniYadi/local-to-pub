@@ -2,6 +2,8 @@
 import type { ServerWebSocket } from "bun";
 
 export const REQUEST_TIMEOUT_ERROR = "Request timeout";
+export const TUNNEL_REQUEST_TIMEOUT_MS = 125_000;
+
 
 export interface PendingRequest {
   subdomain: string;
@@ -34,7 +36,7 @@ export class TunnelManager {
   private connections = new Map<string, ServerWebSocket<unknown>>();
   private browserConnections = new Map<string, BrowserConnection>();
   private pendingRequests = new Map<string, PendingRequest>();
-  private readonly REQUEST_TIMEOUT = 30000; // 30 seconds
+  private readonly REQUEST_TIMEOUT = TUNNEL_REQUEST_TIMEOUT_MS;
   private readonly MAX_BUFFERED_WS_MESSAGES = 100;
 
   registerConnection(subdomain: string, ws: ServerWebSocket<unknown>): void {
@@ -92,7 +94,7 @@ export class TunnelManager {
       const timeout = setTimeout(() => {
         this.pendingRequests.delete(requestId);
         reject(new Error(REQUEST_TIMEOUT_ERROR));
-      }, this.REQUEST_TIMEOUT);
+      }, TUNNEL_REQUEST_TIMEOUT_MS);
 
       this.pendingRequests.set(requestId, {
         subdomain,
