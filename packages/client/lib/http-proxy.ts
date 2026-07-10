@@ -1,5 +1,5 @@
 // packages/client/lib/http-proxy.ts
-export const LOCAL_REQUEST_TIMEOUT_MS = 25_000;
+export const LOCAL_REQUEST_TIMEOUT_MS = 120_000;
 
 export interface ProxyRequest {
   host: string;

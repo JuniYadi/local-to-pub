@@ -1,13 +1,19 @@
 // packages/client/lib/http-proxy.test.ts
-import { test, expect, describe, afterEach } from "bun:test";
-import { proxyRequest } from "./http-proxy";
+import { test, expect, describe, afterEach, jest } from "bun:test";
+import { proxyRequest, LOCAL_REQUEST_TIMEOUT_MS } from "./http-proxy";
+
 
 const originalFetch = global.fetch;
 
 describe("HTTP Proxy", () => {
   afterEach(() => {
     global.fetch = originalFetch;
+    jest.useRealTimers();
   });
+  test("LOCAL_REQUEST_TIMEOUT_MS is 120 seconds for dev compilation", () => {
+    expect(LOCAL_REQUEST_TIMEOUT_MS).toBe(120_000);
+  });
+
   test("proxyRequest forwards GET request", async () => {
     const mockResponse = new Response("hello world", {
       status: 200,
@@ -261,4 +267,38 @@ describe("HTTP Proxy", () => {
     expect(result.status).toBe(502);
     expect(Buffer.from(result.body, "base64").toString()).toBe("Failed to connect to local server");
   });
+  test("proxyRequest keeps slow dev responses open past the old timeout", async () => {
+    jest.useFakeTimers();
+
+    let resolveFetch: (r: Response) => void;
+    let capturedSignal: AbortSignal | undefined;
+
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async (_url, init) => {
+      capturedSignal = init?.signal as AbortSignal;
+      return new Promise<Response>((resolve) => {
+        resolveFetch = resolve;
+      });
+    };
+
+    const resultPromise = proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/slow-dev",
+      headers: {},
+      body: "",
+    });
+
+    jest.advanceTimersByTime(30_001);
+
+    expect(capturedSignal?.aborted).toBe(false);
+
+    resolveFetch!(new Response("compiled", { status: 200 }));
+
+    const result = await resultPromise;
+    expect(result.status).toBe(200);
+    expect(result.body).toBe(Buffer.from("compiled").toString("base64"));
+  });
+
 });
