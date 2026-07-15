@@ -1,8 +1,15 @@
 // packages/server/lib/tunnel-manager.ts
 import type { ServerWebSocket } from "bun";
 
+export function parseTimeoutMs(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 1_000) return fallback;
+  return parsed;
+}
+
 export const REQUEST_TIMEOUT_ERROR = "Request timeout";
-export const TUNNEL_REQUEST_TIMEOUT_MS = 125_000;
+export const TUNNEL_REQUEST_TIMEOUT_MS = parseTimeoutMs(Bun.env.TUNNEL_REQUEST_TIMEOUT_MS, 305_000);
 
 
 export interface PendingRequest {
@@ -115,6 +122,14 @@ export class TunnelManager {
 
     clearTimeout(pending.timeout);
     pending.resolve(response);
+    this.pendingRequests.delete(requestId);
+    return true;
+  }
+  rejectPendingRequest(requestId: string, error: Error): boolean {
+    const pending = this.pendingRequests.get(requestId);
+    if (!pending) return false;
+    clearTimeout(pending.timeout);
+    pending.reject(error);
     this.pendingRequests.delete(requestId);
     return true;
   }
