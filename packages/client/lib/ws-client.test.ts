@@ -129,4 +129,50 @@ describe("TunnelClient", () => {
     });
     expect(wsCloseCall).toBeDefined();
   });
+
+  test("aborts in-flight proxy requests when control socket closes", async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedSignal: AbortSignal | undefined;
+
+    try {
+      // Mock fetch to hang until aborted
+      globalThis.fetch = ((_url: string, init?: RequestInit) => {
+        capturedSignal = init?.signal as AbortSignal;
+        return new Promise<Response>((_resolve, reject) => {
+          if (capturedSignal) {
+            capturedSignal.addEventListener("abort", () => {
+              const err = new Error("Aborted");
+              err.name = "AbortError";
+              reject(err);
+            }, { once: true });
+          }
+        });
+      }) as typeof globalThis.fetch;
+
+      const ws = setupConnectedClient();
+
+      // Send a request message to start a proxy request
+      ws.onmessage?.({ data: JSON.stringify({
+        type: "request",
+        requestId: "req-1",
+        method: "GET",
+        path: "/slow",
+        headers: {},
+        body: "",
+      }) });
+
+      // The pending request should be tracked and fetch should have been called
+      expect(capturedSignal).toBeDefined();
+      expect(capturedSignal!.aborted).toBe(false);
+
+      // Close the control socket
+      ws.onclose?.({});
+
+      // The local fetch should have been aborted
+      expect(capturedSignal!.aborted).toBe(true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
 });

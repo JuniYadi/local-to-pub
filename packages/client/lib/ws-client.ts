@@ -39,10 +39,10 @@ export class TunnelClient {
   private reconnectDelay = 1000;
   private shouldReconnect = true;
   private localWebSockets = new Map<string, LocalWsEntry>();
+  private pendingRequestControllers = new Map<string, AbortController>();
   private reconnectTimer: Timer | null = null;
   private heartbeatTimer: Timer | null = null;
   private lastServerMessageAt = 0;
-
   constructor(options: TunnelClientOptions) {
     this.options = options;
   }
@@ -149,6 +149,12 @@ export class TunnelClient {
       }
       this.localWebSockets.clear();
 
+      // Abort all in-flight local requests
+      for (const [_requestId, controller] of this.pendingRequestControllers) {
+        controller.abort();
+      }
+      this.pendingRequestControllers.clear();
+
       this.options.onDisconnected?.();
       if (this.shouldReconnect) {
         this.attemptReconnect();
@@ -165,25 +171,40 @@ export class TunnelClient {
     const headers = msg.headers as Record<string, string>;
     const body = msg.body as string;
 
+    const controlWs = this.ws;
+    if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
     this.options.onRequest?.(method, path);
 
-    const response = await proxyRequest({
-      host: this.options.localHost,
-      port: this.options.localPort,
-      method,
-      path,
-      headers,
-      body,
-      hostHeader: this.options.hostHeader,
-    });
+    const abortController = new AbortController();
+    this.pendingRequestControllers.set(requestId, abortController);
 
-    this.ws?.send(JSON.stringify({
-      type: "response",
-      requestId,
-      status: response.status,
-      headers: response.headers,
-      body: response.body,
-    }));
+    try {
+      const response = await proxyRequest({
+        host: this.options.localHost,
+        port: this.options.localPort,
+        method,
+        path,
+        headers,
+        body,
+        hostHeader: this.options.hostHeader,
+        signal: abortController.signal,
+      });
+
+      if (controlWs === this.ws && controlWs.readyState === WebSocket.OPEN) {
+        controlWs.send(JSON.stringify({
+          type: "response",
+          requestId,
+          status: response.status,
+          headers: response.headers,
+          body: response.body,
+        }));
+      }
+    } finally {
+      this.pendingRequestControllers.delete(requestId);
+    }
   }
 
   private notifyServerWSClose(requestId: string): void {
@@ -322,6 +343,13 @@ export class TunnelClient {
       try { entry.socket.close(); } catch { /* ignore */ }
     }
     this.localWebSockets.clear();
+
+    // Abort all in-flight local requests
+    for (const [_requestId, controller] of this.pendingRequestControllers) {
+      controller.abort();
+    }
+    this.pendingRequestControllers.clear();
+
     this.ws?.close();
   }
 }

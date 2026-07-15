@@ -1,7 +1,7 @@
 // packages/server/lib/tunnel-manager.test.ts
 import { describe, test, expect, beforeEach, afterEach, mock, jest } from "bun:test";
 import type { ServerWebSocket } from "bun";
-import { TunnelManager, REQUEST_TIMEOUT_ERROR, TUNNEL_REQUEST_TIMEOUT_MS } from "./tunnel-manager";
+import { TunnelManager, REQUEST_TIMEOUT_ERROR, TUNNEL_REQUEST_TIMEOUT_MS, parseTimeoutMs } from "./tunnel-manager";
 
 // Mock WebSocket interface for tests
 interface MockWebSocket {
@@ -111,8 +111,49 @@ describe("TunnelManager", () => {
   test("REQUEST_TIMEOUT_ERROR constant is exported", () => {
     expect(REQUEST_TIMEOUT_ERROR).toBe("Request timeout");
   });
-  test("TUNNEL_REQUEST_TIMEOUT_MS is 125 seconds", () => {
-    expect(TUNNEL_REQUEST_TIMEOUT_MS).toBe(125_000);
+  test("TUNNEL_REQUEST_TIMEOUT_MS is 305 seconds (5s longer than client)", () => {
+    expect(TUNNEL_REQUEST_TIMEOUT_MS).toBe(305_000);
+  });
+
+  test("parseTimeoutMs uses fallback for undefined", () => {
+    expect(parseTimeoutMs(undefined, 305_000)).toBe(305_000);
+  });
+
+  test("parseTimeoutMs uses fallback for NaN", () => {
+    expect(parseTimeoutMs("not-a-number", 305_000)).toBe(305_000);
+  });
+
+  test("parseTimeoutMs uses fallback for values below 1000", () => {
+    expect(parseTimeoutMs("500", 305_000)).toBe(305_000);
+  });
+
+  test("parseTimeoutMs parses valid env value", () => {
+    expect(parseTimeoutMs("600000", 305_000)).toBe(600_000);
+  });
+
+  test("TUNNEL_REQUEST_TIMEOUT_MS is exported and has default value", () => {
+    expect(TUNNEL_REQUEST_TIMEOUT_MS).toBeGreaterThanOrEqual(300_000);
+  });
+
+  test("rejectPendingRequest rejects the pending promise and cleans up", async () => {
+    jest.useFakeTimers();
+
+    const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    manager.registerConnection("test-sub", mockWs);
+
+    const requestId = crypto.randomUUID();
+    const responsePromise = manager.waitForResponse(requestId, "test-sub");
+
+    expect(manager.hasPendingRequest(requestId)).toBe(true);
+
+    const rejectError = new Error("Rejected by test");
+    const result = manager.rejectPendingRequest(requestId, rejectError);
+    expect(result).toBe(true);
+    expect(manager.hasPendingRequest(requestId)).toBe(false);
+
+    await expect(responsePromise).rejects.toThrow("Rejected by test");
+
+    jest.useRealTimers();
   });
 
   test("waitForResponse stays pending through the client dev timeout window", async () => {
@@ -123,11 +164,10 @@ describe("TunnelManager", () => {
 
     const requestId = crypto.randomUUID();
     const responsePromise = manager.waitForResponse(requestId, "abc123");
+    // Advance past the 300s client default
+    jest.advanceTimersByTime(300_001);
 
-    // Advance past the old 30s timeout
-    jest.advanceTimersByTime(120_000);
-
-    // Request should still be pending (server waits 125s)
+    // Request should still be pending (server waits 305s)
     expect(manager.hasPendingRequest(requestId)).toBe(true);
 
     // Resolve the request

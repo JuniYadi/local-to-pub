@@ -1,6 +1,6 @@
 // packages/client/lib/http-proxy.test.ts
 import { test, expect, describe, afterEach, jest } from "bun:test";
-import { proxyRequest, LOCAL_REQUEST_TIMEOUT_MS } from "./http-proxy";
+import { proxyRequest, LOCAL_REQUEST_TIMEOUT_MS, parseTimeoutMs } from "./http-proxy";
 
 
 const originalFetch = global.fetch;
@@ -10,8 +10,24 @@ describe("HTTP Proxy", () => {
     global.fetch = originalFetch;
     jest.useRealTimers();
   });
-  test("LOCAL_REQUEST_TIMEOUT_MS is 120 seconds for dev compilation", () => {
-    expect(LOCAL_REQUEST_TIMEOUT_MS).toBe(120_000);
+  test("LOCAL_REQUEST_TIMEOUT_MS is 300 seconds for dev compilation", () => {
+    expect(LOCAL_REQUEST_TIMEOUT_MS).toBe(300_000);
+  });
+
+  test("parseTimeoutMs uses fallback for undefined", () => {
+    expect(parseTimeoutMs(undefined, 300_000)).toBe(300_000);
+  });
+
+  test("parseTimeoutMs uses fallback for NaN", () => {
+    expect(parseTimeoutMs("not-a-number", 300_000)).toBe(300_000);
+  });
+
+  test("parseTimeoutMs uses fallback for values below 1000", () => {
+    expect(parseTimeoutMs("500", 300_000)).toBe(300_000);
+  });
+
+  test("parseTimeoutMs parses valid env value", () => {
+    expect(parseTimeoutMs("600000", 300_000)).toBe(600_000);
   });
 
   test("proxyRequest forwards GET request", async () => {

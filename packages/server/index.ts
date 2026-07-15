@@ -618,11 +618,19 @@ const server = Bun.serve<WebSocketData>({
       headers: requestMsg.headers,
       body: requestMsg.body,
     });
-
-    ws.send(serializeServerMessage(requestMsg));
+    const responsePromise = tunnelManager.waitForResponse(requestId, subdomain);
 
     try {
-      const response = await tunnelManager.waitForResponse(requestId, subdomain);
+      ws.send(serializeServerMessage(requestMsg));
+    } catch {
+      // Consume the pending promise's rejection to avoid unhandled rejection
+      responsePromise.catch(() => undefined);
+      tunnelManager.rejectPendingRequest(requestId, new Error("Failed to send request to tunnel client"));
+      return new Response("Bad Gateway", { status: 502 });
+    }
+
+    try {
+      const response = await responsePromise;
 
       // Emit response for inspector
       inspectorEvents.emit("response", {
@@ -923,13 +931,15 @@ const server = Bun.serve<WebSocketData>({
     async close(ws) {
       const data = ws.data;
       if (data.type === "control" && data.subdomain) {
-        // Record disconnection in history
-        if (data.connectionId) {
-          recordDisconnection(db, data.connectionId);
+        const currentWs = tunnelManager.getConnection(data.subdomain);
+        if (currentWs === ws) {
+          if (data.connectionId) {
+            recordDisconnection(db, data.connectionId);
+          }
+          await tunnelStore.unregister(data.subdomain);
+          tunnelManager.unregisterConnection(data.subdomain);
+          console.log(`Tunnel disconnected: ${data.subdomain}`);
         }
-        await tunnelStore.unregister(data.subdomain);
-        tunnelManager.unregisterConnection(data.subdomain);
-        console.log(`Tunnel disconnected: ${data.subdomain}`);
       } else if (data.type === "tunnel" && data.wsRequestId) {
         const controlWs = tunnelManager.getConnection(data.subdomain!);
         if (controlWs) {

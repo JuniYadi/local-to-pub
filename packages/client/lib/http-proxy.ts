@@ -1,5 +1,13 @@
 // packages/client/lib/http-proxy.ts
-export const LOCAL_REQUEST_TIMEOUT_MS = 120_000;
+
+export function parseTimeoutMs(value: string | undefined, fallback: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed) || parsed < 1_000) return fallback;
+  return parsed;
+}
+
+export const LOCAL_REQUEST_TIMEOUT_MS = parseTimeoutMs(process.env.TUNNEL_LOCAL_REQUEST_TIMEOUT_MS, 300_000);
 
 export interface ProxyRequest {
   host: string;
@@ -10,6 +18,7 @@ export interface ProxyRequest {
   body: string; // base64
   hostHeader?: string;
   timeoutMs?: number;
+  signal?: AbortSignal; // external abort signal
 }
 
 export interface ProxyResponse {
@@ -72,6 +81,9 @@ export async function proxyRequest(req: ProxyRequest): Promise<ProxyResponse> {
   }
 
   const controller = new AbortController();
+  if (req.signal) {
+    req.signal.addEventListener("abort", () => controller.abort(), { once: true });
+  }
   const timeout = setTimeout(() => controller.abort(), req.timeoutMs ?? LOCAL_REQUEST_TIMEOUT_MS);
 
   try {

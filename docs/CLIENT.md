@@ -59,7 +59,11 @@ You can set these variables to avoid typing them every time:
 ```bash
 export TUNNEL_SERVER="wss://your-domain.com/tunnel"
 export TUNNEL_TOKEN="your-auth-token"
+export TUNNEL_LOCAL_REQUEST_TIMEOUT_MS="300000"  # local fetch timeout ms (default 300000, 5 min)
 ```
+
+> **Note:** The server default `TUNNEL_REQUEST_TIMEOUT_MS` is always 5 s above the client default.
+> If you override the client timeout, also set the server env var to a value at least 5 s larger.
 
 Then you can just run:
 ```bash
