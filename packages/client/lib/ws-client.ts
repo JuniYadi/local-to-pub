@@ -108,7 +108,7 @@ export class TunnelClient {
       }
 
       if (msg.type === "ws_open") {
-        this.handleWSOpen(msg.requestId as string, msg.path as string, msg.headers as Record<string, string> | undefined);
+        this.handleWSOpen(msg.requestId as string, msg.path as string, msg.headers as Record<string, string | string[]> | undefined);
       }
 
       if (msg.type === "ws_data") {
@@ -168,7 +168,7 @@ export class TunnelClient {
     const requestId = msg.requestId as string;
     const method = msg.method as string;
     const path = msg.path as string;
-    const headers = msg.headers as Record<string, string>;
+    const headers = msg.headers as Record<string, string | string[]>;
     const body = msg.body as string;
 
     const controlWs = this.ws;
@@ -180,9 +180,14 @@ export class TunnelClient {
 
     const abortController = new AbortController();
     this.pendingRequestControllers.set(requestId, abortController);
+    const sendJson = (msg: object): void => {
+      if (controlWs === this.ws && controlWs?.readyState === WebSocket.OPEN) {
+        controlWs.send(JSON.stringify(msg));
+      }
+    };
 
     try {
-      const response = await proxyRequest({
+      for await (const part of proxyRequest({
         host: this.options.localHost,
         port: this.options.localPort,
         method,
@@ -191,16 +196,26 @@ export class TunnelClient {
         body,
         hostHeader: this.options.hostHeader,
         signal: abortController.signal,
-      });
-
-      if (controlWs === this.ws && controlWs.readyState === WebSocket.OPEN) {
-        controlWs.send(JSON.stringify({
-          type: "response",
-          requestId,
-          status: response.status,
-          headers: response.headers,
-          body: response.body,
-        }));
+      })) {
+        if (part.type === "head") {
+          sendJson({
+            type: "response_head",
+            requestId,
+            status: part.status,
+            headers: part.headers,
+          });
+        } else if (part.type === "data") {
+          sendJson({
+            type: "response_data",
+            requestId,
+            data: part.data,
+          });
+        } else if (part.type === "end") {
+          sendJson({
+            type: "response_end",
+            requestId,
+          });
+        }
       }
     } finally {
       this.pendingRequestControllers.delete(requestId);
@@ -213,7 +228,7 @@ export class TunnelClient {
     }
   }
 
-  private handleWSOpen(requestId: string, path: string, incomingHeaders: Record<string, string> = {}): void {
+  private handleWSOpen(requestId: string, path: string, incomingHeaders: Record<string, string | string[]> = {}): void {
     this.options.onRequest?.("WS", path);
 
     const url = `ws://${this.options.localHost}:${this.options.localPort}${path}`;
@@ -236,13 +251,13 @@ export class TunnelClient {
     const headers: Record<string, string> = {};
     for (const [key, value] of Object.entries(incomingHeaders)) {
       if (!skipHeaders[key.toLowerCase()]) {
-        headers[key] = value;
+        // WS headers don't support arrays; join multi-value with "; "
+        headers[key] = Array.isArray(value) ? value.join("; ") : value;
       }
     }
     headers["host"] = this.options.hostHeader || `${this.options.localHost}:${this.options.localPort}`;
 
     const localWs = new WebSocket(url, { headers } as unknown as string | string[]);
-
     const entry: LocalWsEntry = {
       socket: localWs,
       openTimer: null,
@@ -269,10 +284,16 @@ export class TunnelClient {
       }));
     };
 
-    localWs.onmessage = (event) => {
+    localWs.onmessage = async (event) => {
       const data = event.data;
-      const base64Data = Buffer.from(typeof data === "string" ? data : data).toString("base64");
-
+      let buffer: Buffer;
+      if (typeof Blob !== "undefined" && data instanceof Blob) {
+        const arrayBuffer = await data.arrayBuffer();
+        buffer = Buffer.from(arrayBuffer);
+      } else {
+        buffer = Buffer.from(typeof data === "string" ? data : data);
+      }
+      const base64Data = buffer.toString("base64");
       this.ws?.send(JSON.stringify({
         type: "ws_data",
         requestId,

@@ -12,8 +12,26 @@ export interface ResponseMessage {
   type: "response";
   requestId: string;
   status: number;
-  headers: Record<string, string>;
+  headers: Record<string, string | string[]>;
   body: string; // base64 encoded
+}
+
+export interface ResponseHeadMessage {
+  type: "response_head";
+  requestId: string;
+  status: number;
+  headers: Record<string, string | string[]>;
+}
+
+export interface ResponseDataMessage {
+  type: "response_data";
+  requestId: string;
+  data: string; // base64
+}
+
+export interface ResponseEndMessage {
+  type: "response_end";
+  requestId: string;
 }
 
 export interface WSReadyMessage {
@@ -25,7 +43,8 @@ export interface PongMessage {
   type: "pong";
 }
 
-export type ClientMessage = AuthMessage | ResponseMessage | WSReadyMessage | WSDataMessage | WSCloseMessage | PongMessage;
+export type ClientMessage = AuthMessage | ResponseMessage | WSReadyMessage | WSDataMessage | WSCloseMessage | PongMessage
+  | ResponseHeadMessage | ResponseDataMessage | ResponseEndMessage;
 
 // Server → Client messages
 export interface AuthOkMessage {
@@ -44,7 +63,7 @@ export interface RequestMessage {
   requestId: string;
   method: string;
   path: string;
-  headers: Record<string, string>;
+  headers: Record<string, string | string[]>;
   body: string; // base64 encoded
 }
 
@@ -52,8 +71,9 @@ export interface WSOpenMessage {
   type: "ws_open";
   requestId: string;
   path: string;
-  headers: Record<string, string>;
+  headers: Record<string, string | string[]>;
 }
+
 
 export interface WSDataMessage {
   type: "ws_data";
@@ -77,7 +97,6 @@ export function parseClientMessage(data: string): ClientMessage | null {
   try {
     const msg = JSON.parse(data);
     if (msg.type === "auth" && typeof msg.token === "string") {
-      // requestedSubdomain is optional
       if (msg.requestedSubdomain !== undefined && typeof msg.requestedSubdomain !== "string") {
         return null;
       }
@@ -85,6 +104,15 @@ export function parseClientMessage(data: string): ClientMessage | null {
     }
     if (msg.type === "response" && typeof msg.requestId === "string") {
       return msg as ResponseMessage;
+    }
+    if (msg.type === "response_head" && typeof msg.requestId === "string" && typeof msg.status === "number") {
+      return msg as ResponseHeadMessage;
+    }
+    if (msg.type === "response_data" && typeof msg.requestId === "string" && typeof msg.data === "string") {
+      return msg as ResponseDataMessage;
+    }
+    if (msg.type === "response_end" && typeof msg.requestId === "string") {
+      return msg as ResponseEndMessage;
     }
     if (msg.type === "ws_ready" && typeof msg.requestId === "string") {
       return msg as WSReadyMessage;

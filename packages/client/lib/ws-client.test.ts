@@ -9,7 +9,7 @@ interface MockWebSocketInstance {
   send: ReturnType<typeof mock>;
   close: ReturnType<typeof mock>;
   onopen: ((event: unknown) => void) | null;
-  onmessage: ((event: { data: string }) => void) | null;
+  onmessage: ((event: { data: string | ArrayBuffer | Uint8Array | Blob }) => void) | null;
   onclose: ((event: unknown) => void) | null;
   onerror: ((event: unknown) => void) | null;
 }
@@ -23,7 +23,7 @@ class MockWebSocket {
   url: string;
   options?: unknown;
   onopen: ((event: unknown) => void) | null = null;
-  onmessage: ((event: { data: string }) => void) | null = null;
+  onmessage: ((event: { data: string | ArrayBuffer | Uint8Array | Blob }) => void) | null = null;
   onclose: ((event: unknown) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
 
@@ -253,4 +253,86 @@ describe("TunnelClient", () => {
     }
   });
 
+  test("streams response parts via response_head/data/end messages", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      // Use a plain string body (not a ReadableStream) so the async generator
+      // completes within microtask flushes
+      globalThis.fetch = (() => new Response("hello chunks", {
+        status: 200,
+        headers: { "Content-Type": "text/x-component" },
+      })) as unknown as typeof globalThis.fetch;
+
+      const ws = setupConnectedClient();
+      ws.send.mock?.calls?.splice(0);
+
+      // Await the onmessage handler so the async generator completes fully
+      await ws.onmessage?.({ data: JSON.stringify({
+        type: "request",
+        requestId: "req-stream",
+        method: "GET",
+        path: "/rsc",
+        headers: {},
+        body: "",
+      }) });
+      const sentCalls = ws.send.mock?.calls ?? [];
+      const msgs = sentCalls.map((call: string[]) => JSON.parse(call[0] ?? "{}"));
+
+      const headMsg = msgs.find((m: any) => m.type === "response_head");
+      expect(headMsg).toBeDefined();
+      expect(headMsg!.requestId).toBe("req-stream");
+      expect(headMsg!.status).toBe(200);
+
+      const dataMsgs = msgs.filter((m: any) => m.type === "response_data");
+      expect(dataMsgs.length).toBeGreaterThanOrEqual(1);
+      const decoded = dataMsgs.map((m: any) => Buffer.from(m.data, "base64").toString()).join("");
+      expect(decoded).toContain("hello");
+
+      const endMsg = msgs.find((m: any) => m.type === "response_end");
+      expect(endMsg).toBeDefined();
+      expect(endMsg!.requestId).toBe("req-stream");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  test("forwards Blob local WS messages as base64", async () => {
+    const ws = setupConnectedClient();
+    ws.send.mock?.calls?.splice(0);
+
+    // Send ws_open to create a local WebSocket bridge
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "ws_open",
+      requestId: "req-ws",
+      path: "/ws",
+    }) });
+
+    const localSocket = MockWebSocket.instances[MockWebSocket.instances.length - 1]!;
+    // Simulate a Blob message — the handler checks Blob instanceof and uses arrayBuffer
+    const blobContent = new Uint8Array([0x68, 0x65, 0x6c, 0x6c, 0x6f]); // "hello"
+    if (localSocket.onmessage) {
+      // For a real Blob, the handler goes through the Blob branch: data.arrayBuffer()
+      // Bun's Blob.arrayBuffer() works in tests
+      await localSocket.onmessage({ data: new Blob([blobContent]) });
+    }
+
+    await Promise.resolve();
+
+    const sentCalls = ws.send.mock?.calls ?? [];
+    const dataCall = sentCalls.find((call: string[]) => {
+      const payload = call[0];
+      if (!payload) return false;
+      try {
+        const parsed = JSON.parse(payload);
+        return parsed.type === "ws_data" && parsed.requestId === "req-ws";
+      } catch { return false; }
+    });
+    expect(dataCall).toBeDefined();
+    if (dataCall) {
+      const payload = dataCall[0];
+      expect(payload).toBeDefined();
+      const msg = JSON.parse(payload!);
+      expect(Buffer.from(msg.data, "base64").toString()).toBe("hello");
+    }
+  });
 });
