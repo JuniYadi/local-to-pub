@@ -9,6 +9,7 @@ import {
   parseClientMessage,
   serializeServerMessage,
   type RequestMessage,
+  type ServerMessage,
 } from "./lib/protocol";
 import { embeddedFrontendJs, embeddedFrontendCss, embeddedFrontendHtml } from "./lib/embedded-frontend";
 import packageJson from "../../package.json";
@@ -65,7 +66,6 @@ const inspectorEvents = new EventEmitter();
 inspectorEvents.setMaxListeners(100);
 
 await tunnelStore.connect();
-
 interface WebSocketData {
   subdomain?: string;
   tokenId?: number;
@@ -74,7 +74,12 @@ interface WebSocketData {
   type: "control" | "tunnel";
   wsRequestId?: string;
   path?: string;
+  headers?: Record<string, string>;
   lastActivity: number;
+}
+
+function sendServerMessage(ws: { send(data: string): number }, message: ServerMessage): boolean {
+  return ws.send(serializeServerMessage(message)) !== 0;
 }
 
 interface SessionPayload {
@@ -566,13 +571,18 @@ const server = Bun.serve<WebSocketData>({
     // Check if this is a WebSocket upgrade request for a tunnel
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
       const wsRequestId = Bun.randomUUIDv7();
+      const headers = Object.fromEntries(req.headers.entries());
+      headers["x-forwarded-host"] = host;
+      headers["x-forwarded-proto"] = url.protocol.replace(":", "");
+      headers["x-forwarded-for"] = server.requestIP(req)?.address || "";
       const upgraded = server.upgrade(req, {
         data: {
           authenticated: true,
           type: "tunnel",
           subdomain,
           wsRequestId,
-          path: url.pathname + url.search, // Store path for the 'open' event
+          path: url.pathname + url.search,
+          headers,
           lastActivity: Date.now(),
         },
       });
@@ -621,7 +631,11 @@ const server = Bun.serve<WebSocketData>({
     const responsePromise = tunnelManager.waitForResponse(requestId, subdomain);
 
     try {
-      ws.send(serializeServerMessage(requestMsg));
+      if (!sendServerMessage(ws, requestMsg)) {
+        responsePromise.catch(() => undefined);
+        tunnelManager.rejectPendingRequest(requestId, new Error("Failed to send request to tunnel client"));
+        return new Response("Bad Gateway", { status: 502 });
+      }
     } catch {
       // Consume the pending promise's rejection to avoid unhandled rejection
       responsePromise.catch(() => undefined);
@@ -679,12 +693,15 @@ const server = Bun.serve<WebSocketData>({
         tunnelManager.registerBrowserConnection(wsRequestId, subdomain, ws);
 
         // Notify the client to open a local WebSocket
-        controlWs.send(serializeServerMessage({
+        if (!sendServerMessage(controlWs, {
           type: "ws_open",
           requestId: wsRequestId,
           path: data.path || "/",
-          headers: {}, // We'll pass actual headers in the future if needed
-        }));
+          headers: data.headers || {},
+        })) {
+          ws.close();
+          tunnelManager.unregisterBrowserConnection(wsRequestId);
+        }
       }
     },
 
@@ -707,11 +724,14 @@ const server = Bun.serve<WebSocketData>({
 
         const controlWs = tunnelManager.getConnection(result.subdomain);
         if (controlWs) {
-          controlWs.send(serializeServerMessage({
+          if (!sendServerMessage(controlWs, {
             type: "ws_data",
             requestId: data.wsRequestId!,
             data: encodedData,
-          }));
+          })) {
+            ws.close();
+            tunnelManager.unregisterBrowserConnection(data.wsRequestId!);
+          }
         }
         return;
       }
@@ -892,11 +912,16 @@ const server = Bun.serve<WebSocketData>({
         }
 
         for (const data of ready.messages) {
-          controlWs.send(serializeServerMessage({
+          if (!sendServerMessage(controlWs, {
             type: "ws_data",
             requestId: parsed.requestId,
             data,
-          }));
+          })) {
+            const browserWs = tunnelManager.getBrowserConnection(parsed.requestId);
+            if (browserWs) browserWs.close();
+            tunnelManager.unregisterBrowserConnection(parsed.requestId);
+            break;
+          }
         }
       }
 
@@ -943,10 +968,10 @@ const server = Bun.serve<WebSocketData>({
       } else if (data.type === "tunnel" && data.wsRequestId) {
         const controlWs = tunnelManager.getConnection(data.subdomain!);
         if (controlWs) {
-          controlWs.send(serializeServerMessage({
+          sendServerMessage(controlWs, {
             type: "ws_close",
             requestId: data.wsRequestId,
-          }));
+          });
         }
         tunnelManager.unregisterBrowserConnection(data.wsRequestId);
       }
