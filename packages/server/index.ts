@@ -3,13 +3,13 @@ import { EventEmitter } from "events";
 import { createToken, deleteToken, initDb, listTokens, updateSubdomain, validateToken, type TokenDb,
          initConnectionHistory, recordConnection, recordDisconnection, getLiveConnections, getPastConnections } from "./lib/db";
 import { TunnelStore } from "./lib/redis";
-import { TunnelManager, REQUEST_TIMEOUT_ERROR } from "./lib/tunnel-manager";
+import { TunnelManager, REQUEST_TIMEOUT_ERROR, parseTimeoutMs } from "./lib/tunnel-manager";
 import { generateSubdomain, extractSubdomain, isValidSubdomain } from "./lib/subdomain";
 import {
   parseClientMessage,
   serializeServerMessage,
-  type RequestMessage,
   type ServerMessage,
+  type RequestMessage,
 } from "./lib/protocol";
 import { embeddedFrontendJs, embeddedFrontendCss, embeddedFrontendHtml } from "./lib/embedded-frontend";
 import packageJson from "../../package.json";
@@ -35,6 +35,9 @@ const SESSION_COOKIE = "admin_session";
 const FRONTEND_PREFIX = "/static/";
 const FRONTEND_ENTRYPOINT = new URL("./frontend.tsx", import.meta.url);
 const APP_VERSION = typeof VERSION !== "undefined" && VERSION ? VERSION : packageJson.version;
+const METRICS_INTERVAL_MS = Number(Bun.env.METRICS_INTERVAL_MS) || 30_000;
+const WS_BUFFER_LIMIT_BYTES = Number(Bun.env.WS_BUFFER_LIMIT_BYTES) || 1_048_576;
+const TUNNEL_STREAM_TIMEOUT_MS = parseTimeoutMs(Bun.env.TUNNEL_STREAM_TIMEOUT_MS, 60_000);
 
 // Parse CLI arguments for --claim-subdomain flag
 let ALLOW_CUSTOM_SUBDOMAINS = (Bun.env.ALLOW_CUSTOM_SUBDOMAINS ?? "true") === "true";
@@ -68,6 +71,7 @@ const db: TokenDb = initDb();
 initConnectionHistory(db);
 const tunnelStore = new TunnelStore(REDIS_URL);
 const tunnelManager = new TunnelManager();
+const streamingResponses = new Map<string, { subdomain: string; controller: ReadableStreamDefaultController; timeout: Timer }>();
 const inspectorEvents = new EventEmitter();
 inspectorEvents.setMaxListeners(100);
 
@@ -82,11 +86,27 @@ interface WebSocketData {
   path?: string;
   headers?: Record<string, string>;
   lastActivity: number;
+  lastPong: number;
+  activeRequests: number;
+}
+function sendOrDrop(ws: ServerWebSocket<unknown> | undefined, data: string | Buffer | Uint8Array, context: string): boolean {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  if (ws.bufferedAmount > WS_BUFFER_LIMIT_BYTES) {
+    console.log(`Closing back-pressured WebSocket (${context}), bufferedAmount=${ws.bufferedAmount}`);
+    ws.close();
+    return false;
+  }
+  return ws.send(data) !== 0;
 }
 
-function sendServerMessage(ws: { send(data: string): number }, message: ServerMessage): boolean {
-  return ws.send(serializeServerMessage(message)) !== 0;
+function sendServerMessage(ws: ServerWebSocket<unknown> | undefined, message: ServerMessage): boolean {
+  return sendOrDrop(ws, serializeServerMessage(message), "");
 }
+
+function logRequestEvent(event: string, requestId: string, subdomain: string, extra?: Record<string, unknown>): void {
+  console.log(JSON.stringify({ t: new Date().toISOString(), event, requestId, subdomain, ...extra }));
+}
+
 function sleep(ms: number): Promise<void> {
   const { promise, resolve } = Promise.withResolvers<void>();
   setTimeout(resolve, ms);
@@ -285,6 +305,20 @@ function serveFrontendAsset(pathname: string): Response | null {
 
 await buildFrontend();
 
+function buildHeaders(headers: Record<string, string | string[]>): Headers {
+  const h = new Headers();
+  for (const [key, value] of Object.entries(headers)) {
+    if (Array.isArray(value)) {
+      for (const v of value) {
+        h.append(key, v);
+      }
+    } else {
+      h.set(key, value);
+    }
+  }
+  return h;
+}
+
 const server = Bun.serve<WebSocketData>({
   port: PORT,
   idleTimeout: SERVER_IDLE_TIMEOUT_SECONDS, // 130 seconds
@@ -320,7 +354,7 @@ const server = Bun.serve<WebSocketData>({
       if (url.pathname === "/tunnel") {
         // Upgrade to WebSocket
         const upgraded = server.upgrade(req, {
-          data: { authenticated: false, type: "control", lastActivity: Date.now() },
+          data: { authenticated: false, type: "control", lastActivity: Date.now(), lastPong: Date.now(), activeRequests: 0 },
         });
         if (!upgraded) {
           return new Response("WebSocket upgrade failed", { status: 400 });
@@ -611,6 +645,8 @@ const server = Bun.serve<WebSocketData>({
           path: url.pathname + url.search,
           headers,
           lastActivity: Date.now(),
+          lastPong: Date.now(),
+          activeRequests: 0,
         },
       });
       if (!upgraded) {
@@ -646,12 +682,21 @@ const server = Bun.serve<WebSocketData>({
     const requestId = Bun.randomUUIDv7();
     const body = req.body ? Buffer.from(await req.arrayBuffer()).toString("base64") : "";
 
-    const headers = Object.fromEntries(req.headers.entries());
-    
-    // Add X-Forwarded headers
-    headers["x-forwarded-host"] = host;
-    headers["x-forwarded-proto"] = url.protocol.replace(":", "");
-    headers["x-forwarded-for"] = server.requestIP(req)?.address || "";
+    // Build headers preserving multi-value entries (except Set-Cookie handled separately)
+    const headers: Record<string, string | string[]> = {};
+    for (const [key, value] of req.headers.entries()) {
+      if (key.toLowerCase() === "set-cookie") continue;
+      const existing = headers[key];
+      if (existing !== undefined) {
+        headers[key] = Array.isArray(existing) ? [...existing, value] : [existing, value];
+      } else {
+        headers[key] = value;
+      }
+    }
+    const setCookie = req.headers.getSetCookie();
+    if (setCookie.length > 0) {
+      headers["set-cookie"] = setCookie.length === 1 ? setCookie[0] as string : setCookie;
+    }
     const requestMsg: RequestMessage = {
       type: "request",
       requestId,
@@ -660,6 +705,8 @@ const server = Bun.serve<WebSocketData>({
       headers,
       body,
     };
+    logRequestEvent("CLIENT_REQUEST", requestId, subdomain, { method: requestMsg.method, path: requestMsg.path });
+
     // Emit request for inspector
     inspectorEvents.emit("request", {
       requestId,
@@ -685,6 +732,11 @@ const server = Bun.serve<WebSocketData>({
       return new Response("Bad Gateway", { status: 502 });
     }
 
+    // Request forwarded — log and track
+    logRequestEvent("FORWARD_TO_AGENT", requestId, subdomain, { method: requestMsg.method, path: requestMsg.path });
+    const wsDataForActive = ws.data as WebSocketData;
+    wsDataForActive.activeRequests = (wsDataForActive.activeRequests || 0) + 1;
+
     try {
       const response = await responsePromise;
 
@@ -698,21 +750,35 @@ const server = Bun.serve<WebSocketData>({
         body: response.body,
       });
 
+      logRequestEvent("CLIENT_RESPONSE_SENT", requestId, subdomain, { status: response.status });
+
+      if (response.stream) {
+        return new Response(response.stream, {
+          status: response.status,
+          headers: buildHeaders(response.headers),
+        });
+      }
       return new Response(Buffer.from(response.body, "base64"), {
         status: response.status,
-        headers: response.headers,
+        headers: buildHeaders(response.headers),
       });
     } catch (error) {
-      if (error instanceof Error && error.message === REQUEST_TIMEOUT_ERROR && tunnelManager.getConnection(subdomain) === ws) {
-        const wsData = ws.data as WebSocketData;
-        if (wsData.connectionId) {
-          recordDisconnection(db, wsData.connectionId);
+      if (error instanceof Error && error.message === REQUEST_TIMEOUT_ERROR) {
+        logRequestEvent("REQUEST_TIMEOUT", requestId, subdomain, { method: requestMsg.method, path: requestMsg.path });
+        if (tunnelManager.getConnection(subdomain) === ws) {
+          const wsData = ws.data as WebSocketData;
+          if (wsData.connectionId) {
+            recordDisconnection(db, wsData.connectionId);
+          }
+          tunnelManager.closeConnection(subdomain);
+          await tunnelStore.unregister(subdomain);
+          console.log(`Closed unresponsive tunnel after request timeout: ${subdomain}`);
         }
-        tunnelManager.closeConnection(subdomain);
-        await tunnelStore.unregister(subdomain);
-        console.log(`Closed unresponsive tunnel after request timeout: ${subdomain}`);
       }
       return new Response("Gateway Timeout", { status: 504 });
+    } finally {
+      const d = ws.data as WebSocketData;
+      d.activeRequests = Math.max(0, (d.activeRequests || 0) - 1);
     }
   },
 
@@ -931,12 +997,70 @@ const server = Bun.serve<WebSocketData>({
         if (!data.authenticated) {
           return;
         }
-
+        logRequestEvent("AGENT_RESPONSE_HEAD", parsed.requestId, data.subdomain!, { status: parsed.status });
         tunnelManager.resolvePendingRequest(parsed.requestId, {
           status: parsed.status,
           headers: parsed.headers,
           body: parsed.body,
         });
+      }
+
+      if (parsed.type === "response_head") {
+        if (!data.authenticated) return;
+        const { requestId, status, headers: headHeaders } = parsed;
+        const subdomainForTimeout = data.subdomain!;
+        const stream = new ReadableStream({
+          start(controller) {
+            const timeout = setTimeout(() => {
+              controller.error(new Error("Stream timeout"));
+              streamingResponses.delete(requestId);
+              // Close the control WebSocket so the agent reconnects cleanly
+              tunnelManager.closeConnection(subdomainForTimeout);
+            }, TUNNEL_STREAM_TIMEOUT_MS);
+            streamingResponses.set(requestId, {
+              subdomain: subdomainForTimeout,
+              controller,
+              timeout,
+            });
+          },
+        });
+        logRequestEvent("AGENT_RESPONSE_HEAD", requestId, data.subdomain!, { status });
+        tunnelManager.resolvePendingRequest(requestId, {
+          status,
+          headers: headHeaders,
+          body: "",
+          stream,
+        });
+      }
+
+      if (parsed.type === "response_data") {
+        if (!data.authenticated) return;
+        const entry = streamingResponses.get(parsed.requestId);
+        if (entry) {
+          // Reset stream timeout on each data chunk
+          clearTimeout(entry.timeout);
+          const subdomainForTimeout = entry.subdomain;
+          entry.timeout = setTimeout(() => {
+            const entry2 = streamingResponses.get(parsed.requestId);
+            if (entry2) {
+              entry2.controller.error(new Error("Stream timeout"));
+              streamingResponses.delete(parsed.requestId);
+            }
+            // Close the control WebSocket so the agent reconnects cleanly
+            tunnelManager.closeConnection(subdomainForTimeout);
+          }, TUNNEL_STREAM_TIMEOUT_MS);
+          entry.controller.enqueue(Buffer.from(parsed.data, "base64"));
+        }
+      }
+
+      if (parsed.type === "response_end") {
+        if (!data.authenticated) return;
+        const entry = streamingResponses.get(parsed.requestId);
+        if (entry) {
+          clearTimeout(entry.timeout);
+          entry.controller.close();
+          streamingResponses.delete(parsed.requestId);
+        }
       }
 
       if (parsed.type === "ws_ready") {
@@ -970,7 +1094,7 @@ const server = Bun.serve<WebSocketData>({
       if (parsed.type === "ws_data") {
         const browserWs = tunnelManager.getBrowserConnection(parsed.requestId);
         if (browserWs) {
-          browserWs.send(Buffer.from(parsed.data, "base64"));
+          sendOrDrop(browserWs, Buffer.from(parsed.data, "base64"), "browser-ws-data");
         }
       }
 
@@ -981,10 +1105,10 @@ const server = Bun.serve<WebSocketData>({
           tunnelManager.unregisterBrowserConnection(parsed.requestId);
         }
       }
-
       if (parsed.type === "pong") {
         // Application-level pong received (response to server ping)
         // lastActivity already updated above
+        data.lastPong = Date.now();
       }
     },
 
@@ -1000,6 +1124,14 @@ const server = Bun.serve<WebSocketData>({
       if (data.type === "control" && data.subdomain) {
         const currentWs = tunnelManager.getConnection(data.subdomain);
         if (currentWs === ws) {
+          // Clean up streaming responses for this subdomain
+          for (const [reqId, entry] of streamingResponses) {
+            if (entry.subdomain === data.subdomain) {
+              clearTimeout(entry.timeout);
+              try { entry.controller.close(); } catch { /* ignore */ }
+              streamingResponses.delete(reqId);
+            }
+          }
           if (data.connectionId) {
             recordDisconnection(db, data.connectionId);
           }
@@ -1023,12 +1155,11 @@ const server = Bun.serve<WebSocketData>({
 
 console.log(`Server running on http://${server.hostname}:${server.port}`);
 console.log(`Base domain: ${BASE_DOMAIN}`);
-
 const pingTimer = setInterval(() => {
   for (const subdomain of tunnelManager.getActiveSubdomains()) {
     const ws = tunnelManager.getConnection(subdomain);
     if (ws) {
-      try { ws.send(serializeServerMessage({ type: "ping" })); } catch { /* connection may be closed */ }
+      try { sendOrDrop(ws, serializeServerMessage({ type: "ping" }), "ping"); } catch { /* connection may be closed */ }
     }
   }
 }, PING_INTERVAL_MS);
@@ -1044,7 +1175,7 @@ const cleanupTimer = setInterval(async () => {
     const data = ws.data as WebSocketData;
     const idleMs = now - data.lastActivity;
     if (idleMs >= HEARTBEAT_TIMEOUT_MS) {
-      console.log(`Closing unresponsive tunnel: ${subdomain} (no app-level message for ${Math.round(idleMs / 1000)}s)`);
+      console.log(`Closing unresponsive tunnel: ${subdomain} (no app-level message for ${Math.round(idleMs / 1000)}s, lastPong=${Math.round((now - data.lastPong) / 1000)}s, activeRequests=${data.activeRequests})`);
       if (data.connectionId) {
         recordDisconnection(db, data.connectionId);
       }
@@ -1055,13 +1186,28 @@ const cleanupTimer = setInterval(async () => {
 }, HEARTBEAT_CHECK_INTERVAL_MS);
 
 // Allow garbage collection on shutdown
+
+// ── Metrics logging ──
+const metricsTimer = setInterval(() => {
+  const mem = process.memoryUsage();
+  console.log(JSON.stringify({
+    t: new Date().toISOString(),
+    event: "METRICS",
+    memory: { rss: mem.rss, heapUsed: mem.heapUsed, heapTotal: mem.heapTotal, external: mem.external },
+    connections: tunnelManager.getConnectionCount(),
+    pendingRequests: tunnelManager.getPendingRequestCount(),
+    streamingResponses: streamingResponses.size,
+  }));
+}, METRICS_INTERVAL_MS);
 process.on("SIGINT", () => {
   clearInterval(pingTimer);
   clearInterval(cleanupTimer);
+  clearInterval(metricsTimer);
   process.exit(0);
 });
 process.on("SIGTERM", () => {
   clearInterval(pingTimer);
   clearInterval(cleanupTimer);
+  clearInterval(metricsTimer);
   process.exit(0);
 });
