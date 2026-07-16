@@ -108,7 +108,7 @@ export class TunnelClient {
       }
 
       if (msg.type === "ws_open") {
-        this.handleWSOpen(msg.requestId as string, msg.path as string);
+        this.handleWSOpen(msg.requestId as string, msg.path as string, msg.headers as Record<string, string> | undefined);
       }
 
       if (msg.type === "ws_data") {
@@ -213,9 +213,35 @@ export class TunnelClient {
     }
   }
 
-  private handleWSOpen(requestId: string, path: string): void {
+  private handleWSOpen(requestId: string, path: string, incomingHeaders: Record<string, string> = {}): void {
+    this.options.onRequest?.("WS", path);
+
     const url = `ws://${this.options.localHost}:${this.options.localPort}${path}`;
-    const localWs = new WebSocket(url);
+
+    // Skip hop-by-hop and WebSocket-generated headers
+    const skipHeaders: Record<string, true> = {
+      host: true,
+      connection: true,
+      "keep-alive": true,
+      "transfer-encoding": true,
+      upgrade: true,
+      "proxy-connection": true,
+      "proxy-authenticate": true,
+      "proxy-authorization": true,
+      "sec-websocket-key": true,
+      "sec-websocket-version": true,
+      "sec-websocket-extensions": true,
+      "sec-websocket-accept": true,
+    };
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(incomingHeaders)) {
+      if (!skipHeaders[key.toLowerCase()]) {
+        headers[key] = value;
+      }
+    }
+    headers["host"] = this.options.hostHeader || `${this.options.localHost}:${this.options.localPort}`;
+
+    const localWs = new WebSocket(url, { headers } as unknown as string | string[]);
 
     const entry: LocalWsEntry = {
       socket: localWs,

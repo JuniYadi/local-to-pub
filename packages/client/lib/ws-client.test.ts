@@ -20,6 +20,8 @@ class MockWebSocket {
   static CLOSED = 3;
 
   readyState = MockWebSocket.OPEN;
+  url: string;
+  options?: unknown;
   onopen: ((event: unknown) => void) | null = null;
   onmessage: ((event: { data: string }) => void) | null = null;
   onclose: ((event: unknown) => void) | null = null;
@@ -34,7 +36,9 @@ class MockWebSocket {
 
   static instances: MockWebSocket[] = [];
 
-  constructor(_url: string) {
+  constructor(url: string, options?: unknown) {
+    this.url = url;
+    this.options = options;
     MockWebSocket.instances.push(this);
   }
 }
@@ -128,6 +132,53 @@ describe("TunnelClient", () => {
       }
     });
     expect(wsCloseCall).toBeDefined();
+  });
+
+  test("forwards WS upgrade headers to the local WebSocket", () => {
+    jest.useFakeTimers();
+
+    const onRequest = mock(() => {});
+    client = new TunnelClient({ ...defaultOptions, onRequest });
+    client.connect();
+    const ws = MockWebSocket.instances[0];
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.({});
+    ws.onmessage?.({ data: JSON.stringify({ type: "auth_ok", url: "https://abc.example.com" }) });
+
+    // Clear the send mock so we only check ws_open-related sends later
+    ws.send.mock?.calls?.splice(0);
+    const localInstancesBefore = MockWebSocket.instances.length;
+
+    // Send ws_open with headers as the server would now send them
+    ws.onmessage?.({ data: JSON.stringify({
+      type: "ws_open",
+      requestId: "req-headers",
+      path: "/_next/webpack-hmr?page=/",
+      headers: {
+        host: "demo.tunnel.example.com",
+        origin: "https://demo.tunnel.example.com",
+        cookie: "sid=1",
+        "sec-websocket-protocol": "webpack-hmr",
+        "sec-websocket-key": "browser-key",
+        "x-forwarded-host": "demo.tunnel.example.com",
+        "x-forwarded-proto": "https",
+      },
+    }) });
+
+    const localSocket = MockWebSocket.instances[localInstancesBefore];
+    expect(localSocket).toBeDefined();
+    expect(localSocket.url).toBe("ws://localhost:3001/_next/webpack-hmr?page=/");
+    expect(localSocket.options).toEqual({
+      headers: {
+        origin: "https://demo.tunnel.example.com",
+        cookie: "sid=1",
+        "sec-websocket-protocol": "webpack-hmr",
+        "x-forwarded-host": "demo.tunnel.example.com",
+        "x-forwarded-proto": "https",
+        host: "localhost:3001",
+      },
+    });
+    expect(onRequest).toHaveBeenCalledWith("WS", "/_next/webpack-hmr?page=/");
   });
 
   test("aborts in-flight proxy requests when control socket closes", async () => {
