@@ -37,6 +37,40 @@ describe("TunnelManager", () => {
     expect(manager.getConnection("abc123")).toBeUndefined();
   });
 
+  test("getPendingRequestCount returns pending request count", async () => {
+    expect(manager.getPendingRequestCount()).toBe(0);
+
+    const requestId = crypto.randomUUID();
+    const responsePromise = manager.waitForResponse(requestId, "abc123");
+    expect(manager.getPendingRequestCount()).toBe(1);
+
+    manager.resolvePendingRequest(requestId, { status: 200, headers: {}, body: "" });
+    expect(manager.getPendingRequestCount()).toBe(0);
+    await responsePromise.catch(() => {});
+  });
+
+  test("unregisterConnection rejects pending requests and closes browser connections", async () => {
+    const closeBrowser = mock(() => {});
+    const controlWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    const browserWs = { send: mock(() => {}), close: closeBrowser } as ServerWebSocket<MockWebSocket>;
+
+    manager.registerConnection("abc123", controlWs);
+    manager.registerBrowserConnection("ws-1", "abc123", browserWs);
+
+    const requestId = crypto.randomUUID();
+    const responsePromise = manager.waitForResponse(requestId, "abc123");
+    expect(manager.getPendingRequestCount()).toBe(1);
+
+    manager.unregisterConnection("abc123");
+
+    expect(manager.getConnection("abc123")).toBeUndefined();
+    expect(closeBrowser).toHaveBeenCalled();
+    expect(manager.getPendingRequestCount()).toBe(0);
+    expect(manager.hasPendingRequest(requestId)).toBe(false);
+
+    await expect(responsePromise).rejects.toThrow("Tunnel disconnected");
+  });
+
   test("getConnection returns undefined for unknown subdomain", () => {
     expect(manager.getConnection("unknown")).toBeUndefined();
   });
