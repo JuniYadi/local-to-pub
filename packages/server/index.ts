@@ -47,6 +47,13 @@ if (cliArgs.includes("--version") || cliArgs.includes("-v")) {
   console.log(`local-to-pub-server v${APP_VERSION}`);
   process.exit(0);
 }
+
+if (cliArgs.includes("--upgrade")) {
+  const global = cliArgs.includes("--global");
+  const { upgrade } = await import("../client/lib/upgrade");
+  await upgrade({ global, binaryName: "local-to-pub-server" });
+  process.exit(0);
+}
 const claimSubdomainArg = cliArgs.find(arg => arg.startsWith("--claim-subdomain="));
 if (claimSubdomainArg) {
   const value = claimSubdomainArg.split("=")[1];

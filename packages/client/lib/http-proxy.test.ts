@@ -2,14 +2,29 @@
 import { test, expect, describe, afterEach, jest } from "bun:test";
 import { proxyRequest, LOCAL_REQUEST_TIMEOUT_MS, parseTimeoutMs } from "./http-proxy";
 
-
 const originalFetch = global.fetch;
+
+async function collectProxyRequest(req: Parameters<typeof proxyRequest>[0]) {
+  const parts: any[] = [];
+  for await (const part of proxyRequest(req)) {
+    parts.push(part);
+  }
+  const head = parts.find((p): p is { type: "head"; status: number; headers: Record<string, string | string[]> } => p.type === "head");
+  const dataParts = parts.filter((p): p is { type: "data"; data: string } => p.type === "data");
+  const body = dataParts.map(p => p.data).join("");
+  return {
+    status: head?.status ?? 0,
+    headers: head?.headers ?? {},
+    body,
+    parts,
+  };
+}
 
 describe("HTTP Proxy", () => {
   afterEach(() => {
     global.fetch = originalFetch;
-    jest.useRealTimers();
   });
+
   test("LOCAL_REQUEST_TIMEOUT_MS is 300 seconds for dev compilation", () => {
     expect(LOCAL_REQUEST_TIMEOUT_MS).toBe(300_000);
   });
@@ -39,7 +54,7 @@ describe("HTTP Proxy", () => {
     // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
@@ -61,14 +76,14 @@ describe("HTTP Proxy", () => {
     // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
       path: "/login",
       headers: {
         "x-forwarded-host": "myapp.tunnel.me",
-        "x-forwarded-proto": "https"
+        "x-forwarded-proto": "https",
       },
       body: "",
     });
@@ -86,14 +101,14 @@ describe("HTTP Proxy", () => {
     // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
       path: "/login",
       headers: {
         "x-forwarded-host": "myapp.tunnel.me",
-        "x-forwarded-proto": "https"
+        "x-forwarded-proto": "https",
       },
       body: "",
     });
@@ -112,20 +127,19 @@ describe("HTTP Proxy", () => {
     // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
       path: "/login",
       headers: {
         "x-forwarded-host": "pgreen.tunnel.juniyadi.id",
-        "x-forwarded-proto": "https"
+        "x-forwarded-proto": "https",
       },
       body: "",
     });
 
     expect(result.status).toBe(307);
-    // Pass through path as-is from local server response
     expect(result.headers["location"]).toBe("https://pgreen.tunnel.juniyadi.id/id/login/start?next=%2Fid&provider=github");
   });
 
@@ -138,14 +152,14 @@ describe("HTTP Proxy", () => {
     // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3300,
       method: "GET",
       path: "/id/login/start?next=%2Fid&provider=github",
       headers: {
         "x-forwarded-host": "pgreen.tunnel.juniyadi.id",
-        "x-forwarded-proto": "https"
+        "x-forwarded-proto": "https",
       },
       body: "",
     });
@@ -163,14 +177,14 @@ describe("HTTP Proxy", () => {
     // @ts-expect-error - Mocking global fetch
     global.fetch = async () => mockResponse;
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3300,
       method: "GET",
       path: "/id/login/start?next=%2Fid&provider=github",
       headers: {
         "x-forwarded-host": "pgreen.tunnel.juniyadi.id",
-        "x-forwarded-proto": "https"
+        "x-forwarded-proto": "https",
       },
       body: "",
     });
@@ -193,14 +207,14 @@ describe("HTTP Proxy", () => {
       });
     };
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
       path: "/id",
       headers: {
         "x-forwarded-host": "demo.tunnel.example.com",
-        "x-forwarded-proto": "https"
+        "x-forwarded-proto": "https",
       },
       body: "",
     });
@@ -221,14 +235,14 @@ describe("HTTP Proxy", () => {
       });
     };
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
       path: "/id",
       headers: {
         "x-forwarded-host": "demo.tunnel.example.com",
-        "x-forwarded-proto": "https"
+        "x-forwarded-proto": "https",
       },
       body: "",
     });
@@ -240,7 +254,6 @@ describe("HTTP Proxy", () => {
   test("proxyRequest returns 504 when the local server exceeds the timeout", async () => {
     // @ts-expect-error - Mocking global fetch
     global.fetch = async (_url, init) => {
-      // Return a promise that will be aborted
       return new Promise((_, reject) => {
         const signal = init?.signal as AbortSignal;
         signal.addEventListener("abort", () => {
@@ -251,7 +264,7 @@ describe("HTTP Proxy", () => {
       });
     };
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
@@ -271,7 +284,7 @@ describe("HTTP Proxy", () => {
       throw new Error("ECONNREFUSED");
     };
 
-    const result = await proxyRequest({
+    const result = await collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
@@ -283,6 +296,7 @@ describe("HTTP Proxy", () => {
     expect(result.status).toBe(502);
     expect(Buffer.from(result.body, "base64").toString()).toBe("Failed to connect to local server");
   });
+
   test("proxyRequest keeps slow dev responses open past the old timeout", async () => {
     jest.useFakeTimers();
 
@@ -297,7 +311,7 @@ describe("HTTP Proxy", () => {
       });
     };
 
-    const resultPromise = proxyRequest({
+    const resultPromise = collectProxyRequest({
       host: "localhost",
       port: 3000,
       method: "GET",
@@ -317,4 +331,75 @@ describe("HTTP Proxy", () => {
     expect(result.body).toBe(Buffer.from("compiled").toString("base64"));
   });
 
+  test("streams a chunked response parts correctly", async () => {
+    const chunk1 = new TextEncoder().encode("chunk0\n");
+    const chunk2 = new TextEncoder().encode("chunk1\n");
+    const chunk3 = new TextEncoder().encode("chunk2\n");
+
+    let pullCount = 0;
+    const body = new ReadableStream({
+      pull(controller) {
+        if (pullCount >= 3) { controller.close(); return; }
+        const chunks = [chunk1, chunk2, chunk3];
+        controller.enqueue(chunks[pullCount]);
+        pullCount++;
+      },
+    });
+
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async () => new Response(body, {
+      status: 200,
+      headers: { "Content-Type": "text/x-component" },
+    });
+
+    const parts: any[] = [];
+    for await (const part of proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/rsc",
+      headers: {},
+      body: "",
+    })) {
+      parts.push(part);
+    }
+
+    expect(parts.length).toBe(5); // head + 3 data + end
+    expect(parts[0].type).toBe("head");
+    expect(parts[0].status).toBe(200);
+    expect(parts[0].headers["content-type"]).toBe("text/x-component");
+    expect(parts[1].type).toBe("data");
+    expect(Buffer.from(parts[1].data, "base64").toString()).toBe("chunk0\n");
+    expect(parts[2].type).toBe("data");
+    expect(Buffer.from(parts[2].data, "base64").toString()).toBe("chunk1\n");
+    expect(parts[3].type).toBe("data");
+    expect(Buffer.from(parts[3].data, "base64").toString()).toBe("chunk2\n");
+    expect(parts[4].type).toBe("end");
+  });
+
+  test("preserves multi-value Set-Cookie headers", async () => {
+    const response = new Response(null, { status: 200, headers: { "Content-Type": "text/plain" } });
+    response.headers.append("Set-Cookie", "a=1");
+    response.headers.append("Set-Cookie", "b=2");
+
+    // @ts-expect-error - Mocking global fetch
+    global.fetch = async () => response;
+
+    const parts: any[] = [];
+    for await (const part of proxyRequest({
+      host: "localhost",
+      port: 3000,
+      method: "GET",
+      path: "/multi-cookie",
+      headers: {},
+      body: "",
+    })) {
+      parts.push(part);
+    }
+
+    const head = parts.find((p: any) => p.type === "head");
+    expect(head).toBeDefined();
+    const setCookie = head!.headers["set-cookie"];
+    expect(setCookie).toEqual(["a=1", "b=2"]);
+  });
 });

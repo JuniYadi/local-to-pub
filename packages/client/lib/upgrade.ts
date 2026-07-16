@@ -7,15 +7,15 @@ import { parseVersionOutput } from "./version";
 export const REPO = "JuniYadi/local-to-pub";
 export const BASE_URL = `https://github.com/${REPO}/releases`;
 
-export function getBinaryPath(global: boolean): string {
+export function getBinaryPath(global: boolean, binaryName = "local-to-pub"): string {
   if (global) {
-    return "/usr/local/bin/local-to-pub";
+    return `/usr/local/bin/${binaryName}`;
   }
-  return join(homedir(), ".local", "bin", "local-to-pub");
+  return join(homedir(), ".local", "bin", binaryName);
 }
 
-export function getDownloadUrl(version: string, os: string, arch: string): string {
-  const filename = `local-to-pub-client-${os}-${arch}-${version}.tar.gz`;
+export function getDownloadUrl(version: string, os: string, arch: string, binaryName = "local-to-pub-client"): string {
+  const filename = `${binaryName}-${os}-${arch}-${version}.tar.gz`;
   return `${BASE_URL}/download/v${version}/${filename}`;
 }
 
@@ -142,15 +142,19 @@ export async function downloadAndExtract(
 
 export interface UpgradeOptions {
   global: boolean;
+  binaryName?: string;
 }
 
 export async function upgrade(options: UpgradeOptions): Promise<void> {
-  const { global } = options;
-  
+  const { global, binaryName } = options;
+  const serverUpgrade = binaryName === "local-to-pub-server";
+  const cliName = serverUpgrade ? "local-to-pub-server" : "local-to-pub";
+  const assetName = serverUpgrade ? "local-to-pub-server" : "local-to-pub-client";
+
   console.log("Checking for updates...");
   console.log("");
-  
-  const targetPath = getBinaryPath(global);
+
+  const targetPath = getBinaryPath(global, cliName);
 
   // Get current version
   let currentVersion: string;
@@ -160,7 +164,7 @@ export async function upgrade(options: UpgradeOptions): Promise<void> {
     console.error(`✗ Failed to get current version: ${(error as Error).message}`);
     process.exit(1);
   }
-  
+
   // Get latest version
   let latestVersion: string;
   try {
@@ -169,20 +173,18 @@ export async function upgrade(options: UpgradeOptions): Promise<void> {
     console.error(`✗ Failed to check for updates: ${(error as Error).message}`);
     process.exit(1);
   }
-  
+
   // Compare versions
   if (currentVersion === latestVersion) {
     console.log(`✓ Already up to date: v${currentVersion}`);
     return;
   }
-  
+
   console.log(`→ Update available: ${currentVersion} → ${latestVersion}`);
   console.log("");
-  
 
   // Check permissions
   try {
-    // Test write permission by checking directory
     const dir = targetPath.substring(0, targetPath.lastIndexOf("/"));
     await Bun.write(`${dir}/.ltp-test`, "");
     await rm(`${dir}/.ltp-test`);
@@ -191,23 +193,23 @@ export async function upgrade(options: UpgradeOptions): Promise<void> {
       console.error(`✗ Permission denied: ${targetPath}`);
       console.error("");
       console.error("Try running with sudo:");
-      console.error("  local-to-pub --upgrade --global");
+      console.error(`  ${cliName} --upgrade --global`);
       process.exit(1);
     }
   }
-  
+
   // Download and install
   const os = detectOS();
   const arch = detectArch();
-  const downloadUrl = getDownloadUrl(latestVersion, os, arch);
-  
+  const downloadUrl = getDownloadUrl(latestVersion, os, arch, assetName);
+
   try {
     await downloadAndExtract(downloadUrl, targetPath);
   } catch (error) {
     console.error(`✗ Upgrade failed: ${(error as Error).message}`);
     process.exit(1);
   }
-  
+
   // Verify
   console.log("");
   try {
