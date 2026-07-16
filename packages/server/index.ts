@@ -1027,6 +1027,9 @@ console.log(`Base domain: ${BASE_DOMAIN}`);
 const pingTimer = setInterval(() => {
   for (const subdomain of tunnelManager.getActiveSubdomains()) {
     const ws = tunnelManager.getConnection(subdomain);
+    if (ws) {
+      try { ws.send(serializeServerMessage({ type: "ping" })); } catch { /* connection may be closed */ }
+    }
   }
 }, PING_INTERVAL_MS);
 
