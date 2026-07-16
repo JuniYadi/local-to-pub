@@ -21,8 +21,9 @@ export interface PendingRequest {
 
 export interface HttpResponse {
   status: number;
-  headers: Record<string, string>;
+  headers: Record<string, string | string[]>;
   body: string; // base64
+  stream?: ReadableStream;
 }
 
 export interface TunnelConnection {
@@ -183,6 +184,10 @@ export class TunnelManager {
 
   getConnectionCount(): number {
     return this.connections.size;
+  }
+
+  getPendingRequestCount(): number {
+    return this.pendingRequests.size;
   }
 
   getActiveSubdomains(): string[] {
