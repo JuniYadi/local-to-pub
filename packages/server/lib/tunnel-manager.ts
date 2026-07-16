@@ -90,6 +90,15 @@ export class TunnelManager {
   hasConnection(subdomain: string): boolean {
     return this.connections.has(subdomain);
   }
+  isConnectionStale(subdomain: string, maxIdleMs: number): boolean {
+    const ws = this.connections.get(subdomain);
+    if (!ws) return true;
+    if (ws.readyState !== WebSocket.OPEN) return true;
+    const data = ws.data as { lastActivity?: number } | undefined;
+    if (!data?.lastActivity) return true;
+    return Date.now() - data.lastActivity >= maxIdleMs;
+  }
+
 
   createPendingRequest(_subdomain: string): string {
     const requestId = crypto.randomUUID();

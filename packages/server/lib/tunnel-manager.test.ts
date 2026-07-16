@@ -6,6 +6,9 @@ import { TunnelManager, REQUEST_TIMEOUT_ERROR, TUNNEL_REQUEST_TIMEOUT_MS, parseT
 // Mock WebSocket interface for tests
 interface MockWebSocket {
   send: ReturnType<typeof mock>;
+  readyState?: number;
+  data?: { lastActivity?: number; connectionId?: number };
+  close?: ReturnType<typeof mock>;
 }
 
 describe("TunnelManager", () => {
@@ -106,6 +109,49 @@ describe("TunnelManager", () => {
   test("markBrowserConnectionReady returns null for nonexistent connection", () => {
     const result = manager.markBrowserConnectionReady("nonexistent");
     expect(result).toBeNull();
+  });
+  test("isConnectionStale returns true for missing subdomain", () => {
+    expect(manager.isConnectionStale("unknown", 45_000)).toBe(true);
+  });
+
+  test("isConnectionStale returns false for open connection with recent activity", () => {
+    const mockWs = { send: mock(() => {}), readyState: 1, data: { lastActivity: Date.now() } } as ServerWebSocket<MockWebSocket>;
+    manager.registerConnection("abc123", mockWs);
+    expect(manager.isConnectionStale("abc123", 45_000)).toBe(false);
+  });
+
+  test("isConnectionStale returns true for closed connection", () => {
+    const mockWs = { send: mock(() => {}), readyState: 3, data: { lastActivity: Date.now() } } as ServerWebSocket<MockWebSocket>;
+    manager.registerConnection("abc123", mockWs);
+    expect(manager.isConnectionStale("abc123", 45_000)).toBe(true);
+  });
+
+  test("isConnectionStale returns true when lastActivity exceeds maxIdleMs", () => {
+    const mockWs = { send: mock(() => {}), readyState: 1, data: { lastActivity: Date.now() - 45_001 } } as ServerWebSocket<MockWebSocket>;
+    manager.registerConnection("abc123", mockWs);
+    expect(manager.isConnectionStale("abc123", 45_000)).toBe(true);
+  });
+
+  test("closeConnection cleans up control socket, browser sockets, and pending requests", async () => {
+    const closeControl = mock(() => {});
+    const closeBrowser = mock(() => {});
+    const controlWs = { send: mock(() => {}), close: closeControl } as ServerWebSocket<MockWebSocket>;
+    const browserWs = { send: mock(() => {}), close: closeBrowser } as ServerWebSocket<MockWebSocket>;
+
+    manager.registerConnection("abc123", controlWs);
+    manager.registerBrowserConnection("ws-1", "abc123", browserWs);
+
+    const requestId = crypto.randomUUID();
+    const responsePromise = manager.waitForResponse(requestId, "abc123");
+    expect(manager.hasPendingRequest(requestId)).toBe(true);
+
+    const result = manager.closeConnection("abc123");
+    expect(result).toBe(true);
+    expect(manager.getConnection("abc123")).toBeUndefined();
+    expect(closeControl).toHaveBeenCalled();
+    expect(closeBrowser).toHaveBeenCalled();
+    expect(manager.hasPendingRequest(requestId)).toBe(false);
+    await expect(responsePromise).rejects.toThrow("Tunnel disconnected");
   });
 
   test("REQUEST_TIMEOUT_ERROR constant is exported", () => {

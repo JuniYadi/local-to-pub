@@ -351,7 +351,9 @@ export class TunnelClient {
 
     this.reconnectTimer = setTimeout(() => {
       this.connect().catch(() => {
-        // Reconnection will be attempted on close
+        if (this.shouldReconnect) {
+          this.attemptReconnect();
+        }
       });
     }, delay);
   }

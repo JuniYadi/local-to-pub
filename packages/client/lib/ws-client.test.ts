@@ -91,6 +91,33 @@ describe("TunnelClient", () => {
     expect(MockWebSocket.instances.length).toBeGreaterThan(initialInstanceCount);
   });
 
+  test("reconnect retries after onerror without onclose", async () => {
+    jest.useFakeTimers();
+
+    const ws = setupConnectedClient();
+
+    // Close to trigger first reconnect attempt
+    ws.onclose?.({});
+
+    // Advance past first reconnect delay (1000ms)
+    jest.advanceTimersByTime(1001);
+    const secondWs = MockWebSocket.instances[1];
+    expect(secondWs).toBeDefined();
+
+    // Trigger onerror on the second WS without onclose
+    secondWs.onerror?.({});
+
+    // The connect() promise rejection needs TWO microtasks to propagate
+    // through the async function wrapping before .catch() fires.
+    // await Promise.resolve() flushes one microtask at a time.
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Now attemptReconnect() has set the next reconnect timer (2000ms)
+    jest.advanceTimersByTime(2001);
+    expect(MockWebSocket.instances.length).toBeGreaterThanOrEqual(3);
+  });
+
   test("closes local sockets when the control socket closes", () => {
     const ws = setupConnectedClient();
 
