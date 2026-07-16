@@ -13,6 +13,7 @@ import {
 } from "./lib/protocol";
 import { embeddedFrontendJs, embeddedFrontendCss, embeddedFrontendHtml } from "./lib/embedded-frontend";
 import packageJson from "../../package.json";
+import type { ServerWebSocket } from "bun";
 
 declare const VERSION: string | undefined;
 
@@ -21,6 +22,11 @@ const PORT = Number(Bun.env.PORT) || 3000;
 const BASE_DOMAIN = Bun.env.BASE_DOMAIN || "localhost:3000";
 const REDIS_URL = Bun.env.REDIS_URL || "redis://localhost:6379";
 const SERVER_IDLE_TIMEOUT_SECONDS = 130;
+const PING_INTERVAL_MS = 15_000;
+const HEARTBEAT_TIMEOUT_MS = 45_000;
+const HEARTBEAT_CHECK_INTERVAL_MS = 15_000;
+const STALE_RECONNECT_GRACE_MS = 2_000;
+const RECONNECT_POLL_MS = 100;
 const ADMIN_USERNAME = Bun.env.ADMIN_USERNAME || "";
 const ADMIN_PASSWORD = Bun.env.ADMIN_PASSWORD || "";
 const SESSION_SECRET = Bun.env.ADMIN_SESSION_SECRET || ADMIN_PASSWORD;
@@ -80,6 +86,27 @@ interface WebSocketData {
 
 function sendServerMessage(ws: { send(data: string): number }, message: ServerMessage): boolean {
   return ws.send(serializeServerMessage(message)) !== 0;
+}
+function sleep(ms: number): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  setTimeout(resolve, ms);
+  return promise;
+}
+
+// ponytail: short grace covers normal reconnect; offline clients still fail fast instead of queueing requests.
+async function waitForFreshConnection(
+  subdomain: string,
+  previousWs: ServerWebSocket<unknown>
+): Promise<ServerWebSocket<unknown> | undefined> {
+  const deadline = Date.now() + STALE_RECONNECT_GRACE_MS;
+  while (Date.now() < deadline) {
+    const ws = tunnelManager.getConnection(subdomain);
+    if (ws && ws !== previousWs && !tunnelManager.isConnectionStale(subdomain, HEARTBEAT_TIMEOUT_MS)) {
+      return ws;
+    }
+    await sleep(Math.min(RECONNECT_POLL_MS, deadline - Date.now()));
+  }
+  return undefined;
 }
 
 interface SessionPayload {
@@ -593,9 +620,26 @@ const server = Bun.serve<WebSocketData>({
     }
 
     // Check if tunnel exists
-    const ws = tunnelManager.getConnection(subdomain);
+    let ws = tunnelManager.getConnection(subdomain);
     if (!ws) {
       return new Response("Tunnel not connected", { status: 502 });
+    }
+
+    // Close stale connections before forwarding — gives a reconnecting client
+    // time to register before we buffer a body or create a pending response.
+    if (tunnelManager.isConnectionStale(subdomain, HEARTBEAT_TIMEOUT_MS)) {
+      const staleWs = ws;
+      const wsData = staleWs.data as WebSocketData;
+      if (wsData.connectionId) {
+        recordDisconnection(db, wsData.connectionId);
+      }
+      tunnelManager.closeConnection(subdomain);
+      await tunnelStore.unregister(subdomain);
+      console.log(`Closed stale tunnel before forwarding request: ${subdomain}`);
+      ws = await waitForFreshConnection(subdomain, staleWs);
+      if (!ws) {
+        return new Response("Tunnel not connected", { status: 502 });
+      }
     }
 
     // Forward request through WebSocket
@@ -608,7 +652,6 @@ const server = Bun.serve<WebSocketData>({
     headers["x-forwarded-host"] = host;
     headers["x-forwarded-proto"] = url.protocol.replace(":", "");
     headers["x-forwarded-for"] = server.requestIP(req)?.address || "";
-
     const requestMsg: RequestMessage = {
       type: "request",
       requestId,
@@ -617,7 +660,6 @@ const server = Bun.serve<WebSocketData>({
       headers,
       body,
     };
-
     // Emit request for inspector
     inspectorEvents.emit("request", {
       requestId,
@@ -982,19 +1024,9 @@ const server = Bun.serve<WebSocketData>({
 console.log(`Server running on http://${server.hostname}:${server.port}`);
 console.log(`Base domain: ${BASE_DOMAIN}`);
 
-// ── Ping / keepalive ──
-// Send application-level ping messages every 15 seconds to all control connections.
-// The client must respond with { type: "pong" } in its message handler.
-// This detects hung clients where TCP is alive but the app is stuck.
-const PING_INTERVAL_MS = 15_000;
-const HEARTBEAT_TIMEOUT_MS = 45_000;
-const HEARTBEAT_CHECK_INTERVAL_MS = 15_000;
 const pingTimer = setInterval(() => {
   for (const subdomain of tunnelManager.getActiveSubdomains()) {
     const ws = tunnelManager.getConnection(subdomain);
-    if (ws) {
-      try { ws.send(serializeServerMessage({ type: "ping" })); } catch { /* connection may be closed */ }
-    }
   }
 }, PING_INTERVAL_MS);
 
