@@ -36,6 +36,8 @@ export interface TunnelConnection {
 export interface BrowserConnection {
   ws: ServerWebSocket<unknown>;
   subdomain: string;
+  path: string;
+  headers: Record<string, string | string[]>;
   ready: boolean;
   pendingMessages: string[];
 }
@@ -72,8 +74,38 @@ export class TunnelManager {
     }
   }
 
-  registerBrowserConnection(wsRequestId: string, subdomain: string, ws: ServerWebSocket<unknown>): void {
-    this.browserConnections.set(wsRequestId, { ws, subdomain, ready: false, pendingMessages: [] });
+  /**
+   * Replace a control connection during same-token reconnect without closing
+   * browser WS entries. Rejects pending HTTP requests (browser will retry),
+   * but preserves active browser WebSocket connections so they continue
+   * uninterrupted after the control WS is swapped.
+   */
+  replaceControlConnection(subdomain: string, newWs: ServerWebSocket<unknown>): Array<{requestId: string; path: string; headers: Record<string, string | string[]>}> {
+    // Reject all pending requests for this subdomain (they were tied to the old control WS)
+    for (const [requestId, pending] of this.pendingRequests) {
+      if (pending.subdomain === subdomain) {
+        clearTimeout(pending.timeout);
+        pending.reject(new Error("Tunnel reconnected"));
+        this.pendingRequests.delete(requestId);
+      }
+    }
+
+    // Replace the control connection — DO NOT close browser connections
+    this.connections.set(subdomain, newWs);
+
+    // Collect active browser connections so caller can re-send ws_open
+    const browserOpens: Array<{requestId: string; path: string; headers: Record<string, string | string[]>}> = [];
+    for (const [wsRequestId, conn] of this.browserConnections) {
+      if (conn.subdomain === subdomain) {
+        conn.ready = false; // Reset so messages buffer until ws_ready
+        browserOpens.push({ requestId: wsRequestId, path: conn.path, headers: conn.headers });
+      }
+    }
+    return browserOpens;
+  }
+
+  registerBrowserConnection(wsRequestId: string, subdomain: string, ws: ServerWebSocket<unknown>, path: string, headers: Record<string, string | string[]>): void {
+    this.browserConnections.set(wsRequestId, { ws, subdomain, path, headers, ready: false, pendingMessages: [] });
   }
 
   unregisterBrowserConnection(wsRequestId: string): void {

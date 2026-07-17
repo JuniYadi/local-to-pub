@@ -55,7 +55,7 @@ describe("TunnelManager", () => {
     const browserWs = { send: mock(() => {}), close: closeBrowser } as ServerWebSocket<MockWebSocket>;
 
     manager.registerConnection("abc123", controlWs);
-    manager.registerBrowserConnection("ws-1", "abc123", browserWs);
+    manager.registerBrowserConnection("ws-1", "abc123", browserWs, "/", {});
 
     const requestId = crypto.randomUUID();
     const responsePromise = manager.waitForResponse(requestId, "abc123");
@@ -100,7 +100,7 @@ describe("TunnelManager", () => {
 
   test("buffered messages are held until markBrowserConnectionReady", () => {
     const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
-    manager.registerBrowserConnection("ws-1", "abc123", mockWs);
+    manager.registerBrowserConnection("ws-1", "abc123", mockWs, "/", {});
 
     const r1 = manager.queueBrowserMessage("ws-1", "msg1");
     expect(r1).toEqual({ subdomain: "abc123", ready: false });
@@ -114,7 +114,7 @@ describe("TunnelManager", () => {
 
   test("queueBrowserMessage returns ready: true when connection is ready", () => {
     const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
-    manager.registerBrowserConnection("ws-1", "abc123", mockWs);
+    manager.registerBrowserConnection("ws-1", "abc123", mockWs, "/", {});
     manager.markBrowserConnectionReady("ws-1");
 
     const result = manager.queueBrowserMessage("ws-1", "msg");
@@ -123,7 +123,7 @@ describe("TunnelManager", () => {
 
   test("queueBrowserMessage closes connection when buffer exceeds 100 messages", () => {
     const mockWs = { send: mock(() => {}), close: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
-    manager.registerBrowserConnection("ws-1", "abc123", mockWs);
+    manager.registerBrowserConnection("ws-1", "abc123", mockWs, "/", {});
 
     // Fill buffer to 100
     for (let i = 0; i < 100; i++) {
@@ -173,7 +173,7 @@ describe("TunnelManager", () => {
     const browserWs = { send: mock(() => {}), close: closeBrowser } as ServerWebSocket<MockWebSocket>;
 
     manager.registerConnection("abc123", controlWs);
-    manager.registerBrowserConnection("ws-1", "abc123", browserWs);
+    manager.registerBrowserConnection("ws-1", "abc123", browserWs, "/", {});
 
     const requestId = crypto.randomUUID();
     const responsePromise = manager.waitForResponse(requestId, "abc123");
@@ -187,6 +187,53 @@ describe("TunnelManager", () => {
     expect(manager.hasPendingRequest(requestId)).toBe(false);
     await expect(responsePromise).rejects.toThrow("Tunnel disconnected");
   });
+
+  test("replaceControlConnection rejects pending requests but preserves browser connections", async () => {
+    const closeBrowser = mock(() => {});
+    const oldControl = { send: mock(() => {}), close: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    const newControl = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
+    const browserWs = { send: mock(() => {}), close: closeBrowser } as ServerWebSocket<MockWebSocket>;
+
+    manager.registerConnection("abc123", oldControl);
+    manager.registerBrowserConnection("ws-1", "abc123", browserWs, "/my-path", { "x-custom": "v1" });
+    manager.markBrowserConnectionReady("ws-1");
+
+    // Create a pending HTTP request
+    const requestId = crypto.randomUUID();
+    const responsePromise = manager.waitForResponse(requestId, "abc123");
+    expect(manager.hasPendingRequest(requestId)).toBe(true);
+
+    // The browser WS is ready (ready: true)
+    const before = manager.queueBrowserMessage("ws-1", "data");
+    expect(before).toEqual({ subdomain: "abc123", ready: true });
+
+    // replaceControlConnection — should NOT close browser WS
+    const browserOpens = manager.replaceControlConnection("abc123", newControl);
+
+    // Pending request was rejected
+    expect(manager.hasPendingRequest(requestId)).toBe(false);
+    await expect(responsePromise).rejects.toThrow("Tunnel reconnected");
+
+    // Browser connection NOT closed
+    expect(closeBrowser).not.toHaveBeenCalled();
+
+    // Returned the stored path/headers
+    expect(browserOpens).toHaveLength(1);
+    expect(browserOpens[0]).toEqual({ requestId: "ws-1", path: "/my-path", headers: { "x-custom": "v1" } });
+
+    // Control connection replaced with new WS
+    expect(manager.getConnection("abc123")).toBe(newControl);
+
+    // Browser connection ready was reset (messages now buffer until ws_ready)
+    const after = manager.queueBrowserMessage("ws-1", "data2");
+    expect(after).toEqual({ subdomain: "abc123", ready: false });
+
+    // Simulate replayed ws_open → client ws_ready: flush buffered messages
+    const replayed = manager.markBrowserConnectionReady("ws-1");
+    expect(replayed).toEqual({ subdomain: "abc123", messages: ["data2"] });
+    expect(manager.queueBrowserMessage("ws-1", "data3")).toEqual({ subdomain: "abc123", ready: true });
+  });
+
 
   test("REQUEST_TIMEOUT_ERROR constant is exported", () => {
     expect(REQUEST_TIMEOUT_ERROR).toBe("Request timeout");
