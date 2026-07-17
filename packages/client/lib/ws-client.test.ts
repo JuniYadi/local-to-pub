@@ -72,7 +72,7 @@ describe("TunnelClient", () => {
     expect(ws).toBeDefined();
     ws.readyState = MockWebSocket.OPEN;
     ws.onopen?.({});
-    ws.onmessage?.({ data: JSON.stringify({ type: "auth_ok", url: "https://abc.example.com" }) });
+    ws.onmessage?.({ data: JSON.stringify({ type: "auth_ok", subdomain: "abc", url: "https://abc.example.com" }) });
 
     return ws;
   }
@@ -89,6 +89,46 @@ describe("TunnelClient", () => {
     jest.advanceTimersByTime(1001);
     // Should have created a new WebSocket instance for reconnection
     expect(MockWebSocket.instances.length).toBeGreaterThan(initialInstanceCount);
+  });
+
+  test("sticky-reclaims assigned subdomain on reconnect auth", async () => {
+    jest.useFakeTimers();
+
+    client = new TunnelClient(defaultOptions);
+    client.connect();
+    const ws = MockWebSocket.instances[0];
+    expect(ws).toBeDefined();
+    ws.readyState = MockWebSocket.OPEN;
+    ws.onopen?.({});
+    ws.onmessage?.({
+      data: JSON.stringify({
+        type: "auth_ok",
+        subdomain: "pgreen",
+        url: "https://pgreen.example.com",
+      }),
+    });
+
+    ws.onclose?.({});
+    jest.advanceTimersByTime(1001);
+
+    const reconnectWs = MockWebSocket.instances[1];
+    expect(reconnectWs).toBeDefined();
+    reconnectWs.readyState = MockWebSocket.OPEN;
+    reconnectWs.onopen?.({});
+
+    const authCall = reconnectWs.send.mock.calls.find((call: string[]) => {
+      try {
+        return JSON.parse(call[0]).type === "auth";
+      } catch {
+        return false;
+      }
+    });
+    expect(authCall).toBeDefined();
+    expect(JSON.parse(authCall![0] as string)).toMatchObject({
+      type: "auth",
+      token: "test-token",
+      requestedSubdomain: "pgreen",
+    });
   });
 
   test("reconnect retries after onerror without onclose", async () => {
