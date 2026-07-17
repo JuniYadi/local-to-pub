@@ -120,6 +120,16 @@ function sleep(ms: number): Promise<void> {
   return promise;
 }
 
+
+function cleanupStreamingResponses(subdomain: string): void {
+  for (const [reqId, entry] of streamingResponses) {
+    if (entry.subdomain === subdomain) {
+      clearTimeout(entry.timeout);
+      try { entry.controller.close(); } catch { /* ignore */ }
+      streamingResponses.delete(reqId);
+    }
+  }
+}
 // ponytail: short grace covers normal reconnect; offline clients still fail fast instead of queueing requests.
 async function waitForFreshConnection(
   subdomain: string,
@@ -805,7 +815,7 @@ const server = Bun.serve<WebSocketData>({
         }
 
         // Register the browser connection
-        tunnelManager.registerBrowserConnection(wsRequestId, subdomain, ws);
+        tunnelManager.registerBrowserConnection(wsRequestId, subdomain, ws, data.path || "/", data.headers || {});
 
         // Notify the client to open a local WebSocket
         if (!sendServerMessage(controlWs, {
@@ -855,7 +865,7 @@ const server = Bun.serve<WebSocketData>({
       const parsed = parseClientMessage(msgStr);
 
       if (!parsed) {
-        ws.send(serializeServerMessage({ type: "auth_error", message: "Invalid message" }));
+        sendServerMessage(ws, { type: "auth_error", message: "Invalid message" });
         return;
       }
 
@@ -866,7 +876,7 @@ const server = Bun.serve<WebSocketData>({
 
         const tokenRecord = validateToken(db, parsed.token);
         if (!tokenRecord) {
-          ws.send(serializeServerMessage({ type: "auth_error", message: "Invalid token" }));
+          sendServerMessage(ws, { type: "auth_error", message: "Invalid token" });
           ws.close();
           return;
         }
@@ -876,16 +886,16 @@ const server = Bun.serve<WebSocketData>({
         if (parsed.requestedSubdomain) {
           // Client requested a specific subdomain - check if allowed
           if (!ALLOW_CUSTOM_SUBDOMAINS) {
-            ws.send(serializeServerMessage({
+            sendServerMessage(ws, {
               type: "auth_error",
               message: "Custom subdomain requests are disabled on this server. Please reconnect without the --uri flag, or configure a persistent subdomain for your token."
-            }));
+            });
             ws.close();
             return;
           }
           // Client requested a specific subdomain
           if (!isValidSubdomain(parsed.requestedSubdomain)) {
-            ws.send(serializeServerMessage({ type: "auth_error", message: "Invalid subdomain format" }));
+            sendServerMessage(ws, { type: "auth_error", message: "Invalid subdomain format" });
             ws.close();
             return;
           }
@@ -895,13 +905,25 @@ const server = Bun.serve<WebSocketData>({
           if (existingWS) {
             const existingData = existingWS.data as WebSocketData;
             if (existingData.tokenId === tokenRecord.id) {
-              console.log(`Reconnecting same token to subdomain: ${parsed.requestedSubdomain}. Closing old connection.`);
+              console.log(`Reconnecting same token to subdomain: ${parsed.requestedSubdomain}. Replacing control connection.`);
               if (existingData.connectionId) {
                 recordDisconnection(db, existingData.connectionId);
               }
+              cleanupStreamingResponses(parsed.requestedSubdomain);
+              const browserOpens = tunnelManager.replaceControlConnection(parsed.requestedSubdomain, ws);
               existingWS.close();
-              tunnelManager.unregisterConnection(parsed.requestedSubdomain);
-              await tunnelStore.unregister(parsed.requestedSubdomain);
+              data.authenticated = true;
+              data.subdomain = parsed.requestedSubdomain;
+              data.tokenId = tokenRecord.id;
+              data.connectionId = recordConnection(db, parsed.requestedSubdomain, tokenRecord.id);
+              const protocol = Bun.env.NODE_ENV === "production" ? "https" : "http";
+              const url = `${protocol}://${parsed.requestedSubdomain}.${BASE_DOMAIN}`;
+              sendServerMessage(ws, { type: "auth_ok", subdomain: parsed.requestedSubdomain, url });
+              for (const open of browserOpens) {
+                sendServerMessage(ws, { type: "ws_open", requestId: open.requestId, path: open.path, headers: open.headers });
+              }
+              console.log(`Tunnel re-registered: ${parsed.requestedSubdomain} with ${browserOpens.length} active browser WS`);
+              return;
             } else if (parsed.force && existingWS.readyState !== WebSocket.OPEN) {
               console.log(`Force-taking dead subdomain: ${parsed.requestedSubdomain}. Closing stale connection.`);
               if (existingData.connectionId) {
@@ -912,11 +934,11 @@ const server = Bun.serve<WebSocketData>({
               await tunnelStore.unregister(parsed.requestedSubdomain);
             } else if (parsed.force) {
               // Connection is still alive - force not allowed
-              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain is currently active. Use admin dashboard to disconnect it first." }));
+              sendServerMessage(ws, { type: "auth_error", message: "Subdomain is currently active. Use admin dashboard to disconnect it first." });
               ws.close();
               return;
             } else {
-              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
+              sendServerMessage(ws, { type: "auth_error", message: "Subdomain already in use" });
               ws.close();
               return;
             }
@@ -931,13 +953,25 @@ const server = Bun.serve<WebSocketData>({
           if (existingWS) {
             const existingData = existingWS.data as WebSocketData;
             if (existingData.tokenId === tokenRecord.id) {
-              console.log(`Reconnecting same token to persistent subdomain: ${subdomain}. Closing old connection.`);
+              console.log(`Reconnecting same token to persistent subdomain: ${subdomain}. Replacing control connection.`);
               if (existingData.connectionId) {
                 recordDisconnection(db, existingData.connectionId);
               }
+              cleanupStreamingResponses(subdomain);
+              const browserOpens = tunnelManager.replaceControlConnection(subdomain, ws);
               existingWS.close();
-              tunnelManager.unregisterConnection(subdomain);
-              await tunnelStore.unregister(subdomain);
+              data.authenticated = true;
+              data.subdomain = subdomain;
+              data.tokenId = tokenRecord.id;
+              data.connectionId = recordConnection(db, subdomain, tokenRecord.id);
+              const protocol = Bun.env.NODE_ENV === "production" ? "https" : "http";
+              const url = `${protocol}://${subdomain}.${BASE_DOMAIN}`;
+              sendServerMessage(ws, { type: "auth_ok", subdomain, url });
+              for (const open of browserOpens) {
+                sendServerMessage(ws, { type: "ws_open", requestId: open.requestId, path: open.path, headers: open.headers });
+              }
+              console.log(`Tunnel re-registered: ${subdomain} with ${browserOpens.length} active browser WS`);
+              return;
             } else if (parsed.force && existingWS.readyState !== WebSocket.OPEN) {
               console.log(`Force-taking dead persistent subdomain: ${subdomain}. Closing stale connection.`);
               if (existingData.connectionId) {
@@ -948,11 +982,11 @@ const server = Bun.serve<WebSocketData>({
               await tunnelStore.unregister(subdomain);
             } else if (parsed.force) {
               // Connection is still alive - force not allowed
-              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain is currently active. Use admin dashboard to disconnect it first." }));
+              sendServerMessage(ws, { type: "auth_error", message: "Subdomain is currently active. Use admin dashboard to disconnect it first." });
               ws.close();
               return;
             } else {
-              ws.send(serializeServerMessage({ type: "auth_error", message: "Subdomain already in use" }));
+              sendServerMessage(ws, { type: "auth_error", message: "Subdomain already in use" });
               ws.close();
               return;
             }
@@ -966,7 +1000,7 @@ const server = Bun.serve<WebSocketData>({
           } while (await tunnelStore.exists(subdomain) && attempts < 10);
 
           if (attempts >= 10) {
-            ws.send(serializeServerMessage({ type: "auth_error", message: "Could not generate subdomain" }));
+            sendServerMessage(ws, { type: "auth_error", message: "Could not generate subdomain" });
             ws.close();
             return;
           }
@@ -988,11 +1022,11 @@ const server = Bun.serve<WebSocketData>({
         const protocol = Bun.env.NODE_ENV === "production" ? "https" : "http";
         const url = `${protocol}://${subdomain}.${BASE_DOMAIN}`;
 
-        ws.send(serializeServerMessage({
+        sendServerMessage(ws, {
           type: "auth_ok",
           subdomain,
           url,
-        }));
+        });
 
         // Record connection in history
         data.connectionId = recordConnection(db, subdomain, tokenRecord.id);
@@ -1032,12 +1066,21 @@ const server = Bun.serve<WebSocketData>({
           },
         });
         logRequestEvent("AGENT_RESPONSE_HEAD", requestId, data.subdomain!, { status });
-        tunnelManager.resolvePendingRequest(requestId, {
+        const resolved = tunnelManager.resolvePendingRequest(requestId, {
           status,
           headers: headHeaders,
           body: "",
           stream,
         });
+        if (!resolved) {
+          // Request was already rejected (e.g., client reconnected mid-flight)
+          const entry = streamingResponses.get(requestId);
+          if (entry) {
+            clearTimeout(entry.timeout);
+            try { entry.controller.close(); } catch { /* ignore */ }
+            streamingResponses.delete(requestId);
+          }
+        }
       }
 
       if (parsed.type === "response_data") {
@@ -1131,14 +1174,7 @@ const server = Bun.serve<WebSocketData>({
       if (data.type === "control" && data.subdomain) {
         const currentWs = tunnelManager.getConnection(data.subdomain);
         if (currentWs === ws) {
-          // Clean up streaming responses for this subdomain
-          for (const [reqId, entry] of streamingResponses) {
-            if (entry.subdomain === data.subdomain) {
-              clearTimeout(entry.timeout);
-              try { entry.controller.close(); } catch { /* ignore */ }
-              streamingResponses.delete(reqId);
-            }
-          }
+          cleanupStreamingResponses(data.subdomain);
           if (data.connectionId) {
             recordDisconnection(db, data.connectionId);
           }
