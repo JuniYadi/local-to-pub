@@ -25,7 +25,9 @@ const SERVER_IDLE_TIMEOUT_SECONDS = 130;
 const PING_INTERVAL_MS = 15_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
 const HEARTBEAT_CHECK_INTERVAL_MS = 15_000;
-const STALE_RECONNECT_GRACE_MS = 2_000;
+// Cover client reconnect backoff (1s, 2s, 4s…) so browsers don't get instant 502
+// while the agent is still coming back after a control-channel drop.
+const STALE_RECONNECT_GRACE_MS = 15_000;
 const RECONNECT_POLL_MS = 100;
 const ADMIN_USERNAME = Bun.env.ADMIN_USERNAME || "";
 const ADMIN_PASSWORD = Bun.env.ADMIN_PASSWORD || "";
@@ -78,7 +80,14 @@ const db: TokenDb = initDb();
 initConnectionHistory(db);
 const tunnelStore = new TunnelStore(REDIS_URL);
 const tunnelManager = new TunnelManager();
-const streamingResponses = new Map<string, { subdomain: string; controller: ReadableStreamDefaultController; timeout: Timer }>();
+const streamingResponses = new Map<string, {
+  subdomain: string;
+  controller: ReadableStreamDefaultController;
+  timeout: Timer;
+  ownerWs?: ServerWebSocket<unknown>;
+}>();
+// Subdomains that just dropped — hold browser requests briefly for reconnect
+const recentlyDisconnected = new Map<string, number>();
 const inspectorEvents = new EventEmitter();
 inspectorEvents.setMaxListeners(100);
 
@@ -130,18 +139,43 @@ function cleanupStreamingResponses(subdomain: string): void {
     }
   }
 }
-// ponytail: short grace covers normal reconnect; offline clients still fail fast instead of queueing requests.
-async function waitForFreshConnection(
+function markRecentlyDisconnected(subdomain: string): void {
+  recentlyDisconnected.set(subdomain, Date.now());
+}
+
+function clearRecentlyDisconnected(subdomain: string): void {
+  recentlyDisconnected.delete(subdomain);
+}
+
+function isRecentlyDisconnected(subdomain: string): boolean {
+  const at = recentlyDisconnected.get(subdomain);
+  if (at === undefined) return false;
+  if (Date.now() - at > STALE_RECONNECT_GRACE_MS) {
+    recentlyDisconnected.delete(subdomain);
+    return false;
+  }
+  return true;
+}
+
+// Wait for a live control connection after disconnect/stale close.
+// previousWs, when set, must be replaced before we accept the connection.
+async function waitForConnection(
   subdomain: string,
-  previousWs: ServerWebSocket<unknown>
+  previousWs?: ServerWebSocket<unknown>
 ): Promise<ServerWebSocket<unknown> | undefined> {
   const deadline = Date.now() + STALE_RECONNECT_GRACE_MS;
   while (Date.now() < deadline) {
     const ws = tunnelManager.getConnection(subdomain);
-    if (ws && ws !== previousWs && !tunnelManager.isConnectionStale(subdomain, HEARTBEAT_TIMEOUT_MS)) {
+    if (
+      ws &&
+      ws !== previousWs &&
+      ws.readyState === WebSocket.OPEN &&
+      !tunnelManager.isConnectionStale(subdomain, HEARTBEAT_TIMEOUT_MS)
+    ) {
+      clearRecentlyDisconnected(subdomain);
       return ws;
     }
-    await sleep(Math.min(RECONNECT_POLL_MS, deadline - Date.now()));
+    await sleep(Math.min(RECONNECT_POLL_MS, Math.max(0, deadline - Date.now())));
   }
   return undefined;
 }
@@ -648,6 +682,26 @@ const server = Bun.serve<WebSocketData>({
 
     // Check if this is a WebSocket upgrade request for a tunnel
     if (req.headers.get("upgrade")?.toLowerCase() === "websocket") {
+      // Hold the upgrade briefly while a reconnecting agent comes back.
+      let controlForWs = tunnelManager.getConnection(subdomain);
+      if (controlForWs && tunnelManager.isConnectionStale(subdomain, HEARTBEAT_TIMEOUT_MS)) {
+        const staleWs = controlForWs;
+        const wsData = staleWs.data as WebSocketData;
+        if (wsData.connectionId) {
+          recordDisconnection(db, wsData.connectionId);
+        }
+        markRecentlyDisconnected(subdomain);
+        tunnelManager.closeConnection(subdomain);
+        await tunnelStore.unregister(subdomain);
+        console.log(`Closed stale tunnel before WS upgrade: ${subdomain}`);
+        controlForWs = await waitForConnection(subdomain, staleWs);
+      } else if (!controlForWs && isRecentlyDisconnected(subdomain)) {
+        controlForWs = await waitForConnection(subdomain);
+      }
+      if (!controlForWs) {
+        return new Response("Tunnel not connected", { status: 502 });
+      }
+
       const wsRequestId = Bun.randomUUIDv7();
       const headers = Object.fromEntries(req.headers.entries());
       headers["x-forwarded-host"] = host;
@@ -672,10 +726,15 @@ const server = Bun.serve<WebSocketData>({
       return undefined;
     }
 
-    // Check if tunnel exists
+    // Check if tunnel exists — wait only if this subdomain just disconnected
     let ws = tunnelManager.getConnection(subdomain);
     if (!ws) {
-      return new Response("Tunnel not connected", { status: 502 });
+      if (isRecentlyDisconnected(subdomain)) {
+        ws = await waitForConnection(subdomain);
+      }
+      if (!ws) {
+        return new Response("Tunnel not connected", { status: 502 });
+      }
     }
 
     // Close stale connections before forwarding — gives a reconnecting client
@@ -686,10 +745,11 @@ const server = Bun.serve<WebSocketData>({
       if (wsData.connectionId) {
         recordDisconnection(db, wsData.connectionId);
       }
+      markRecentlyDisconnected(subdomain);
       tunnelManager.closeConnection(subdomain);
       await tunnelStore.unregister(subdomain);
       console.log(`Closed stale tunnel before forwarding request: ${subdomain}`);
-      ws = await waitForFreshConnection(subdomain, staleWs);
+      ws = await waitForConnection(subdomain, staleWs);
       if (!ws) {
         return new Response("Tunnel not connected", { status: 502 });
       }
@@ -714,6 +774,10 @@ const server = Bun.serve<WebSocketData>({
     if (setCookie.length > 0) {
       headers["set-cookie"] = setCookie.length === 1 ? setCookie[0] as string : setCookie;
     }
+    // Required for redirect rewrite and apps that trust proxy headers
+    headers["x-forwarded-host"] = host;
+    headers["x-forwarded-proto"] = url.protocol.replace(":", "");
+    headers["x-forwarded-for"] = server.requestIP(req)?.address || "";
     const requestMsg: RequestMessage = {
       type: "request",
       requestId,
@@ -787,12 +851,19 @@ const server = Bun.serve<WebSocketData>({
           if (wsData.connectionId) {
             recordDisconnection(db, wsData.connectionId);
           }
+          markRecentlyDisconnected(subdomain);
           tunnelManager.closeConnection(subdomain);
           await tunnelStore.unregister(subdomain);
           console.log(`Closed unresponsive tunnel after request timeout: ${subdomain}`);
         }
+        return new Response("Gateway Timeout", { status: 504 });
       }
-      return new Response("Gateway Timeout", { status: 504 });
+      // Tunnel reconnected / disconnected mid-request — not a true timeout
+      if (error instanceof Error && (error.message === "Tunnel reconnected" || error.message === "Tunnel disconnected")) {
+        logRequestEvent("REQUEST_ABORTED", requestId, subdomain, { reason: error.message });
+        return new Response("Bad Gateway", { status: 502 });
+      }
+      return new Response("Bad Gateway", { status: 502 });
     } finally {
       const d = ws.data as WebSocketData;
       d.activeRequests = Math.max(0, (d.activeRequests || 0) - 1);
@@ -912,10 +983,17 @@ const server = Bun.serve<WebSocketData>({
               cleanupStreamingResponses(parsed.requestedSubdomain);
               const browserOpens = tunnelManager.replaceControlConnection(parsed.requestedSubdomain, ws);
               existingWS.close();
+              // Re-register in Redis in case the old close path already unregistered
+              await tunnelStore.register(parsed.requestedSubdomain, {
+                tokenId: tokenRecord.id,
+                connectedAt: Date.now(),
+                localPort: 0,
+              });
               data.authenticated = true;
               data.subdomain = parsed.requestedSubdomain;
               data.tokenId = tokenRecord.id;
               data.connectionId = recordConnection(db, parsed.requestedSubdomain, tokenRecord.id);
+              clearRecentlyDisconnected(parsed.requestedSubdomain);
               const protocol = Bun.env.NODE_ENV === "production" ? "https" : "http";
               const url = `${protocol}://${parsed.requestedSubdomain}.${BASE_DOMAIN}`;
               sendServerMessage(ws, { type: "auth_ok", subdomain: parsed.requestedSubdomain, url });
@@ -960,10 +1038,17 @@ const server = Bun.serve<WebSocketData>({
               cleanupStreamingResponses(subdomain);
               const browserOpens = tunnelManager.replaceControlConnection(subdomain, ws);
               existingWS.close();
+              // Re-register in Redis in case the old close path already unregistered
+              await tunnelStore.register(subdomain, {
+                tokenId: tokenRecord.id,
+                connectedAt: Date.now(),
+                localPort: 0,
+              });
               data.authenticated = true;
               data.subdomain = subdomain;
               data.tokenId = tokenRecord.id;
               data.connectionId = recordConnection(db, subdomain, tokenRecord.id);
+              clearRecentlyDisconnected(subdomain);
               const protocol = Bun.env.NODE_ENV === "production" ? "https" : "http";
               const url = `${protocol}://${subdomain}.${BASE_DOMAIN}`;
               sendServerMessage(ws, { type: "auth_ok", subdomain, url });
@@ -1018,6 +1103,7 @@ const server = Bun.serve<WebSocketData>({
         data.authenticated = true;
         data.subdomain = subdomain;
         data.tokenId = tokenRecord.id;
+        clearRecentlyDisconnected(subdomain);
 
         const protocol = Bun.env.NODE_ENV === "production" ? "https" : "http";
         const url = `${protocol}://${subdomain}.${BASE_DOMAIN}`;
@@ -1050,18 +1136,23 @@ const server = Bun.serve<WebSocketData>({
         if (!data.authenticated) return;
         const { requestId, status, headers: headHeaders } = parsed;
         const subdomainForTimeout = data.subdomain!;
+        const streamOwnerWs = ws;
         const stream = new ReadableStream({
           start(controller) {
             const timeout = setTimeout(() => {
               controller.error(new Error("Stream timeout"));
               streamingResponses.delete(requestId);
-              // Close the control WebSocket so the agent reconnects cleanly
-              tunnelManager.closeConnection(subdomainForTimeout);
+              // Only close if this control socket still owns the subdomain
+              // (avoids killing a freshly reconnected tunnel for a stale stream)
+              if (tunnelManager.getConnection(subdomainForTimeout) === streamOwnerWs) {
+                tunnelManager.closeConnection(subdomainForTimeout);
+              }
             }, TUNNEL_STREAM_TIMEOUT_MS);
             streamingResponses.set(requestId, {
               subdomain: subdomainForTimeout,
               controller,
               timeout,
+              ownerWs: streamOwnerWs,
             });
           },
         });
@@ -1096,8 +1187,10 @@ const server = Bun.serve<WebSocketData>({
               entry2.controller.error(new Error("Stream timeout"));
               streamingResponses.delete(parsed.requestId);
             }
-            // Close the control WebSocket so the agent reconnects cleanly
-            tunnelManager.closeConnection(subdomainForTimeout);
+            // Only close if this control socket still owns the subdomain
+            if (!entry.ownerWs || tunnelManager.getConnection(subdomainForTimeout) === entry.ownerWs) {
+              tunnelManager.closeConnection(subdomainForTimeout);
+            }
           }, TUNNEL_STREAM_TIMEOUT_MS);
           entry.controller.enqueue(Buffer.from(parsed.data, "base64"));
         }
@@ -1178,6 +1271,7 @@ const server = Bun.serve<WebSocketData>({
           if (data.connectionId) {
             recordDisconnection(db, data.connectionId);
           }
+          markRecentlyDisconnected(data.subdomain);
           await tunnelStore.unregister(data.subdomain);
           tunnelManager.unregisterConnection(data.subdomain);
           console.log(`Tunnel disconnected: ${data.subdomain}`);
@@ -1222,6 +1316,7 @@ const cleanupTimer = setInterval(async () => {
       if (data.connectionId) {
         recordDisconnection(db, data.connectionId);
       }
+      markRecentlyDisconnected(subdomain);
       tunnelManager.closeConnection(subdomain);
       await tunnelStore.unregister(subdomain);
     }

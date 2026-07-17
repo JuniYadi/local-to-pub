@@ -81,6 +81,11 @@ export class TunnelClient {
       const msg = JSON.parse(event.data) as ServerMessage;
 
       if (msg.type === "auth_ok") {
+        // Sticky-reclaim the assigned subdomain on future reconnects so the
+        // public URL stays stable even when started without --uri.
+        if (typeof msg.subdomain === "string" && msg.subdomain) {
+          this.options.requestedSubdomain = msg.subdomain;
+        }
         if (settled) return;
         settled = true;
         clearTimeout(connectTimeout);
