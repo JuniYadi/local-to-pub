@@ -18,6 +18,7 @@ const { values } = parseArgs({
     version: { type: "boolean", short: "v", default: false },
     upgrade: { type: "boolean", default: false },
     global: { type: "boolean", default: false },
+    verbose: { type: "boolean", default: false },
     help: { type: "boolean", default: false },
   },
   allowPositionals: true,
@@ -53,6 +54,7 @@ Options:
   --upgrade             Upgrade to latest version
   --global              Install/upgrade to system-wide directory (/usr/local/bin)
   --help                Show this help message
+  --verbose             Enable internal debug logging
 `);
   process.exit(0);
 }
@@ -90,6 +92,7 @@ async function main() {
     localPort,
     hostHeader,
     force: !!values.force,
+    verbose: !!values.verbose,
     requestedSubdomain: values.uri,
     onConnected: (url) => {
       console.log(`\n✓ Tunnel active: ${url}`);

@@ -18,6 +18,7 @@ export interface TunnelClientOptions {
   onDisconnected?: () => void;
   onError?: (error: Error) => void;
   onRequest?: (method: string, path: string) => void;
+  verbose?: boolean;
 }
 
 interface ServerMessage {
@@ -45,6 +46,13 @@ export class TunnelClient {
   private lastServerMessageAt = 0;
   constructor(options: TunnelClientOptions) {
     this.options = options;
+  }
+
+  private log(...args: unknown[]): void {
+    if (this.options.verbose) console.log(...args);
+  }
+  private logError(...args: unknown[]): void {
+    if (this.options.verbose) console.error(...args);
   }
 
   async connect(): Promise<void> {
@@ -181,14 +189,14 @@ export class TunnelClient {
 
     const controlWs = this.ws;
     if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
-      console.error(
+      this.logError(
         `[tunnel-client] handleRequest silently dropped: requestId=${requestId} method=${method} path=${path} ` +
         `ws=${controlWs ? `readyState=${controlWs.readyState}` : "null"} this.ws=${this.ws ? `readyState=${this.ws.readyState}` : "null"}`,
       );
       return;
     }
 
-    console.log(`[tunnel-client] Handling request: ${method} ${path} (requestId=${requestId})`);
+    this.log(`[tunnel-client] Handling request: ${method} ${path} (requestId=${requestId})`);
 
     this.options.onRequest?.(method, path);
 
@@ -212,13 +220,21 @@ export class TunnelClient {
       };
 
       if (trySend(controlWs)) return;
+      // If the captured socket is closed, abort so proxyRequest stops streaming
+      if (controlWs && controlWs.readyState === WebSocket.CLOSED) {
+        abortController.abort();
+        if (loggedSendDrop) return;
+        loggedSendDrop = true;
+        this.logError(`[tunnel-client] sendJson: socket closed, aborted requestId=${requestId}`);
+        return;
+      }
 
       if (loggedSendDrop) return;
       loggedSendDrop = true;
       const msgType = typeof msg === "object" && msg !== null && "type" in msg
         ? String((msg as Record<string, unknown>).type)
         : "unknown";
-      console.error(
+      this.logError(
         `[tunnel-client] sendJson dropped ${msgType} for requestId=${requestId}: ` +
         `controlWs===this.ws=${controlWs === this.ws} ` +
         `controlWs.readyState=${controlWs?.readyState ?? "null"} ` +
@@ -269,7 +285,7 @@ export class TunnelClient {
   }
 
   private handleWSOpen(requestId: string, path: string, incomingHeaders: Record<string, string | string[]> = {}): void {
-    console.log(`[tunnel-client] WS open: requestId=${requestId} path=${path}`);
+    this.log(`[tunnel-client] WS open: requestId=${requestId} path=${path}`);
     this.options.onRequest?.("WS", path);
 
     const url = `ws://${this.options.localHost}:${this.options.localPort}${path}`;
@@ -368,11 +384,11 @@ export class TunnelClient {
   private handleWSData(requestId: string, data: string): void {
     const entry = this.localWebSockets.get(requestId);
     if (!entry) {
-      console.error(`[tunnel-client] WS data dropped: no entry for requestId=${requestId}`);
+      this.logError(`[tunnel-client] WS data dropped: no entry for requestId=${requestId}`);
       return;
     }
     if (entry.socket.readyState !== WebSocket.OPEN) {
-      console.error(`[tunnel-client] WS data dropped: local WS not open for requestId=${requestId} readyState=${entry.socket.readyState}`);
+      this.logError(`[tunnel-client] WS data dropped: local WS not open for requestId=${requestId} readyState=${entry.socket.readyState}`);
       return;
     }
     entry.socket.send(Buffer.from(data, "base64"));
@@ -380,12 +396,12 @@ export class TunnelClient {
   private handleWSClose(requestId: string): void {
     const entry = this.localWebSockets.get(requestId);
     if (entry) {
-      console.log(`[tunnel-client] WS close: requestId=${requestId}`);
+      this.log(`[tunnel-client] WS close: requestId=${requestId}`);
       clearTimeout(entry.openTimer);
       try { entry.socket.close(); } catch { /* ignore */ }
       this.localWebSockets.delete(requestId);
     } else {
-      console.error(`[tunnel-client] WS close: no entry for requestId=${requestId}`);
+      this.logError(`[tunnel-client] WS close: no entry for requestId=${requestId}`);
     }
   }
 
