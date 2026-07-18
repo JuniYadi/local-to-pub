@@ -39,7 +39,7 @@ export class TunnelClient {
   private reconnectDelay = 1000;
   private shouldReconnect = true;
   private localWebSockets = new Map<string, LocalWsEntry>();
-  private pendingRequestControllers = new Map<string, AbortController>();
+  private pendingRequestControllers = new Map<string, { controller: AbortController; ws: WebSocket | null }>();
   private reconnectTimer: Timer | null = null;
   private heartbeatTimer: Timer | null = null;
   private lastServerMessageAt = 0;
@@ -51,7 +51,8 @@ export class TunnelClient {
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     let settled = false;
 
-    this.ws = new WebSocket(this.options.serverUrl);
+    const ws = new WebSocket(this.options.serverUrl);
+    this.ws = ws;
 
     const connectTimeout = setTimeout(() => {
       if (!settled) {
@@ -154,11 +155,13 @@ export class TunnelClient {
       }
       this.localWebSockets.clear();
 
-      // Abort all in-flight local requests
-      for (const [_requestId, controller] of this.pendingRequestControllers) {
-        controller.abort();
+      const closingWs = ws;
+      for (const [requestId, entry] of this.pendingRequestControllers) {
+        if (entry.ws === closingWs) {
+          entry.controller.abort();
+          this.pendingRequestControllers.delete(requestId);
+        }
       }
-      this.pendingRequestControllers.clear();
 
       this.options.onDisconnected?.();
       if (this.shouldReconnect) {
@@ -178,17 +181,49 @@ export class TunnelClient {
 
     const controlWs = this.ws;
     if (!controlWs || controlWs.readyState !== WebSocket.OPEN) {
+      console.error(
+        `[tunnel-client] handleRequest silently dropped: requestId=${requestId} method=${method} path=${path} ` +
+        `ws=${controlWs ? `readyState=${controlWs.readyState}` : "null"} this.ws=${this.ws ? `readyState=${this.ws.readyState}` : "null"}`,
+      );
       return;
     }
+
+    console.log(`[tunnel-client] Handling request: ${method} ${path} (requestId=${requestId})`);
 
     this.options.onRequest?.(method, path);
 
     const abortController = new AbortController();
-    this.pendingRequestControllers.set(requestId, abortController);
+    this.pendingRequestControllers.set(requestId, { controller: abortController, ws: controlWs });
+    let loggedSendDrop = false;
     const sendJson = (msg: object): void => {
-      if (controlWs === this.ws && controlWs?.readyState === WebSocket.OPEN) {
-        controlWs.send(JSON.stringify(msg));
-      }
+      // Send on the captured socket only; if it was replaced by reconnect,
+      // the server already rejected pending requests — sending on the new
+      // socket would be silently ignored.
+      const trySend = (ws: WebSocket | null): boolean => {
+        if (ws?.readyState === WebSocket.OPEN) {
+          try {
+            ws.send(JSON.stringify(msg));
+            return true;
+          } catch {
+            // TOCTOU: socket closed between check and send
+          }
+        }
+        return false;
+      };
+
+      if (trySend(controlWs)) return;
+
+      if (loggedSendDrop) return;
+      loggedSendDrop = true;
+      const msgType = typeof msg === "object" && msg !== null && "type" in msg
+        ? String((msg as Record<string, unknown>).type)
+        : "unknown";
+      console.error(
+        `[tunnel-client] sendJson dropped ${msgType} for requestId=${requestId}: ` +
+        `controlWs===this.ws=${controlWs === this.ws} ` +
+        `controlWs.readyState=${controlWs?.readyState ?? "null"} ` +
+        `this.ws.readyState=${this.ws?.readyState ?? "null"}`,
+      );
     };
 
     try {
@@ -234,6 +269,7 @@ export class TunnelClient {
   }
 
   private handleWSOpen(requestId: string, path: string, incomingHeaders: Record<string, string | string[]> = {}): void {
+    console.log(`[tunnel-client] WS open: requestId=${requestId} path=${path}`);
     this.options.onRequest?.("WS", path);
 
     const url = `ws://${this.options.localHost}:${this.options.localPort}${path}`;
@@ -329,20 +365,27 @@ export class TunnelClient {
 
     this.localWebSockets.set(requestId, entry);
   }
-
   private handleWSData(requestId: string, data: string): void {
     const entry = this.localWebSockets.get(requestId);
-    if (entry && entry.socket.readyState === WebSocket.OPEN) {
-      entry.socket.send(Buffer.from(data, "base64"));
+    if (!entry) {
+      console.error(`[tunnel-client] WS data dropped: no entry for requestId=${requestId}`);
+      return;
     }
+    if (entry.socket.readyState !== WebSocket.OPEN) {
+      console.error(`[tunnel-client] WS data dropped: local WS not open for requestId=${requestId} readyState=${entry.socket.readyState}`);
+      return;
+    }
+    entry.socket.send(Buffer.from(data, "base64"));
   }
-
   private handleWSClose(requestId: string): void {
     const entry = this.localWebSockets.get(requestId);
     if (entry) {
+      console.log(`[tunnel-client] WS close: requestId=${requestId}`);
       clearTimeout(entry.openTimer);
       try { entry.socket.close(); } catch { /* ignore */ }
       this.localWebSockets.delete(requestId);
+    } else {
+      console.error(`[tunnel-client] WS close: no entry for requestId=${requestId}`);
     }
   }
 

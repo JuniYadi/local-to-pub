@@ -1,7 +1,7 @@
 // packages/client/lib/upgrade.ts
-import { homedir, platform, arch, tmpdir } from "os";
+import { homedir, platform, arch } from "os";
 import { join } from "path";
-import { mkdtemp, rm, readdir, chmod, copyFile, mkdir } from "fs/promises";
+import { mkdtemp, rm, readdir, chmod, rename, mkdir } from "fs/promises";
 import { parseVersionOutput } from "./version";
 
 export const REPO = "JuniYadi/local-to-pub";
@@ -90,50 +90,51 @@ export async function downloadAndExtract(
   url: string,
   targetPath: string
 ): Promise<void> {
-  const tmpDir = await mkdtemp(join(tmpdir(), "ltp-upgrade-"));
-  
+  // Create temp dir on same filesystem as target so rename(2) is atomic
+  const targetDir = targetPath.substring(0, targetPath.lastIndexOf("/"));
+  await mkdir(targetDir, { recursive: true });
+  const tmpDir = await mkdtemp(join(targetDir, ".ltp-upgrade-"));
+
   try {
     // Download
     console.log("  Downloading...");
     const response = await fetch(url);
-    
+
     if (!response.ok) {
       throw new Error(`Download failed: ${response.status} ${response.statusText}`);
     }
-    
+
     const tarballPath = join(tmpDir, "release.tar.gz");
     const buffer = Buffer.from(await response.arrayBuffer());
-    
+
     if (buffer.length === 0) {
       throw new Error("Downloaded file is empty");
     }
-    
+
     await Bun.write(tarballPath, buffer);
-    
+
     // Extract
     console.log("  Extracting...");
     const proc = Bun.spawn(["tar", "-xzf", tarballPath, "-C", tmpDir]);
     await proc.exited;
-    
+
     // Find binary
     const files = await readdir(tmpDir);
     const binaryFile = files.find(f => f.startsWith("local-to-pub") && !f.endsWith(".tar.gz"));
-    
+
     if (!binaryFile) {
       throw new Error("Binary not found in archive");
     }
-    
-    const extractedPath = join(tmpDir, binaryFile);
-    
-    // Ensure target directory exists
-    const targetDir = targetPath.substring(0, targetPath.lastIndexOf("/"));
-    await mkdir(targetDir, { recursive: true });
 
-    // Copy to target
+    const extractedPath = join(tmpDir, binaryFile);
+
+    // Set permissions before rename so the binary is executable immediately
+    await chmod(extractedPath, 0o755);
+
+    // Atomic rename — safe on running binaries on Linux (replaces dentry, not inode)
     console.log("  Installing...");
-    await copyFile(extractedPath, targetPath);
-    await chmod(targetPath, 0o755);
-    
+    await rename(extractedPath, targetPath);
+
   } finally {
     // Cleanup
     await rm(tmpDir, { recursive: true, force: true });
