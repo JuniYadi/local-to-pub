@@ -147,14 +147,35 @@ export async function* proxyRequest(req: ProxyRequest): AsyncGenerator<ProxyPart
       const reader = response.body?.getReader();
       if (reader) {
         while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          yield { type: "data" as const, data: Buffer.from(value).toString("base64") };
+          let chunkTimer: Timer | undefined;
+          let chunkDone = false;
+          let chunkValue: Uint8Array | undefined;
+          try {
+            const result = await Promise.race([
+              reader.read(),
+              new Promise<{ done: true; value: undefined }>((_, reject) => {
+                chunkTimer = setTimeout(
+                  () => reject(new Error("Chunk timeout")),
+                  req.timeoutMs ?? LOCAL_REQUEST_TIMEOUT_MS,
+                );
+              }),
+            ]);
+            chunkDone = result.done;
+            chunkValue = result.value;
+          } finally {
+            clearTimeout(chunkTimer);
+          }
+          if (chunkDone) break;
+          yield { type: "data" as const, data: Buffer.from(chunkValue!).toString("base64") };
         }
       }
       yield { type: "end" as const };
-    } catch {
-      yield { type: "data" as const, data: Buffer.from("Stream error").toString("base64") };
+    } catch (e) {
+      // Stream error or chunk timeout: head already sent, just end the stream
+      const msg = e instanceof Error && e.message === "Chunk timeout"
+        ? "Chunk read timed out"
+        : "Stream error";
+      yield { type: "data" as const, data: Buffer.from(msg).toString("base64") };
       yield { type: "end" as const };
     }
   } catch (error) {
