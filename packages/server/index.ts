@@ -888,16 +888,40 @@ const server = Bun.serve<WebSocketData>({
         // Register the browser connection
         tunnelManager.registerBrowserConnection(wsRequestId, subdomain, ws, data.path || "/", data.headers || {});
 
-        // Notify the client to open a local WebSocket
-        if (!sendServerMessage(controlWs, {
-          type: "ws_open",
-          requestId: wsRequestId,
-          path: data.path || "/",
-          headers: data.headers || {},
-        })) {
-          ws.close();
-          tunnelManager.unregisterBrowserConnection(wsRequestId);
-        }
+        // Retry ws_open because the new agent's onopen/onmessage→auth_ok may not have
+        // completed yet (ws_readyState === CONNECTING). The browser WebSocket stays open
+        // during the retry window so the browser does NOT give up.
+        let retries = 0;
+        const MAX_WS_OPEN_RETRIES = 3;
+        const WS_OPEN_RETRY_DELAYS_MS = [0, 100, 200];
+
+        const trySendWsOpen = (): void => {
+          // Re-fetch the control connection on each attempt (it never changes during retries,
+          // but the check keeps the logic clear).
+          const current = tunnelManager.getConnection(subdomain);
+          if (!current) {
+            ws.close();
+            tunnelManager.unregisterBrowserConnection(wsRequestId);
+            return;
+          }
+          if (sendServerMessage(current, {
+            type: "ws_open",
+            requestId: wsRequestId,
+            path: data.path || "/",
+            headers: data.headers || {},
+          })) {
+            return; // success
+          }
+          if (retries < MAX_WS_OPEN_RETRIES) {
+            const delay = WS_OPEN_RETRY_DELAYS_MS[retries];
+            retries++;
+            setTimeout(trySendWsOpen, delay);
+          } else {
+            ws.close();
+            tunnelManager.unregisterBrowserConnection(wsRequestId);
+          }
+        };
+        trySendWsOpen();
       }
     },
 
