@@ -118,7 +118,10 @@ export class TunnelClient {
       }
 
       if (msg.type === "request") {
-        await this.handleRequest(msg);
+        void this.handleRequest(msg).catch((error) => {
+          this.options.onError?.(error instanceof Error ? error : new Error(String(error)));
+        });
+        return;
       }
 
       if (msg.type === "ws_open") {

@@ -238,8 +238,8 @@ describe("TunnelManager", () => {
   test("REQUEST_TIMEOUT_ERROR constant is exported", () => {
     expect(REQUEST_TIMEOUT_ERROR).toBe("Request timeout");
   });
-  test("TUNNEL_REQUEST_TIMEOUT_MS is 305 seconds (5s longer than client)", () => {
-    expect(TUNNEL_REQUEST_TIMEOUT_MS).toBe(305_000);
+  test("TUNNEL_REQUEST_TIMEOUT_MS is 20 minutes plus 5 seconds", () => {
+    expect(TUNNEL_REQUEST_TIMEOUT_MS).toBe(1_205_000);
   });
 
   test("parseTimeoutMs uses fallback for undefined", () => {
@@ -283,7 +283,7 @@ describe("TunnelManager", () => {
     jest.useRealTimers();
   });
 
-  test("waitForResponse stays pending through the client dev timeout window", async () => {
+  test("waitForResponse stays pending through a 16 minute dev compile", async () => {
     jest.useFakeTimers();
 
     const mockWs = { send: mock(() => {}) } as ServerWebSocket<MockWebSocket>;
@@ -291,10 +291,10 @@ describe("TunnelManager", () => {
 
     const requestId = crypto.randomUUID();
     const responsePromise = manager.waitForResponse(requestId, "abc123");
-    // Advance past the 300s client default
-    jest.advanceTimersByTime(300_001);
+    // Advance past the user-observed 16-minute slow compile
+    jest.advanceTimersByTime(16 * 60_000 + 10_000);
 
-    // Request should still be pending (server waits 305s)
+    // Request should still be pending (server waits 20 min + 5s)
     expect(manager.hasPendingRequest(requestId)).toBe(true);
 
     // Resolve the request

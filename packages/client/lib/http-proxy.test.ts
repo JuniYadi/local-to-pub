@@ -25,8 +25,8 @@ describe("HTTP Proxy", () => {
     global.fetch = originalFetch;
   });
 
-  test("LOCAL_REQUEST_TIMEOUT_MS is 300 seconds for dev compilation", () => {
-    expect(LOCAL_REQUEST_TIMEOUT_MS).toBe(300_000);
+  test("LOCAL_REQUEST_TIMEOUT_MS is 20 minutes for slow dev compilation", () => {
+    expect(LOCAL_REQUEST_TIMEOUT_MS).toBe(1_200_000);
   });
 
   test("parseTimeoutMs uses fallback for undefined", () => {
@@ -320,7 +320,7 @@ describe("HTTP Proxy", () => {
       body: "",
     });
 
-    jest.advanceTimersByTime(30_001);
+    jest.advanceTimersByTime(16 * 60_000 + 10_000);
 
     expect(capturedSignal?.aborted).toBe(false);
 

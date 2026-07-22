@@ -7,7 +7,8 @@ export function parseTimeoutMs(value: string | undefined, fallback: number): num
   return parsed;
 }
 
-export const LOCAL_REQUEST_TIMEOUT_MS = parseTimeoutMs(process.env.TUNNEL_LOCAL_REQUEST_TIMEOUT_MS, 300_000);
+const SLOW_DEV_RESPONSE_TIMEOUT_MS = 20 * 60_000;
+export const LOCAL_REQUEST_TIMEOUT_MS = parseTimeoutMs(process.env.TUNNEL_LOCAL_REQUEST_TIMEOUT_MS, SLOW_DEV_RESPONSE_TIMEOUT_MS);
 
 export interface ProxyRequest {
   host: string;

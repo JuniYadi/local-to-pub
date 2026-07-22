@@ -9,7 +9,8 @@ export function parseTimeoutMs(value: string | undefined, fallback: number): num
 }
 
 export const REQUEST_TIMEOUT_ERROR = "Request timeout";
-export const TUNNEL_REQUEST_TIMEOUT_MS = parseTimeoutMs(Bun.env.TUNNEL_REQUEST_TIMEOUT_MS, 305_000);
+const SLOW_DEV_RESPONSE_TIMEOUT_MS = 20 * 60_000;
+export const TUNNEL_REQUEST_TIMEOUT_MS = parseTimeoutMs(Bun.env.TUNNEL_REQUEST_TIMEOUT_MS, SLOW_DEV_RESPONSE_TIMEOUT_MS + 5_000);
 
 
 export interface PendingRequest {
@@ -46,7 +47,6 @@ export class TunnelManager {
   private connections = new Map<string, ServerWebSocket<unknown>>();
   private browserConnections = new Map<string, BrowserConnection>();
   private pendingRequests = new Map<string, PendingRequest>();
-  private readonly REQUEST_TIMEOUT = TUNNEL_REQUEST_TIMEOUT_MS;
   private readonly MAX_BUFFERED_WS_MESSAGES = 100;
 
   registerConnection(subdomain: string, ws: ServerWebSocket<unknown>): void {
