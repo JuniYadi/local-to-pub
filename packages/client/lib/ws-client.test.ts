@@ -9,11 +9,11 @@ interface MockWebSocketInstance {
   send: ReturnType<typeof mock>;
   close: ReturnType<typeof mock>;
   onopen: ((event: unknown) => void) | null;
-  onmessage: ((event: { data: string | ArrayBuffer | Uint8Array | Blob }) => void) | null;
+  onmessage: ((event: { data: string | ArrayBuffer | Uint8Array | Blob }) => void | Promise<void>) | null;
   onclose: ((event: unknown) => void) | null;
   onerror: ((event: unknown) => void) | null;
+  receive: (data: string) => Promise<unknown>;
 }
-
 class MockWebSocket {
   static OPEN = 1;
   static CONNECTING = 0;
@@ -23,7 +23,7 @@ class MockWebSocket {
   url: string;
   options?: unknown;
   onopen: ((event: unknown) => void) | null = null;
-  onmessage: ((event: { data: string | ArrayBuffer | Uint8Array | Blob }) => void) | null = null;
+  onmessage: ((event: { data: string | ArrayBuffer | Uint8Array | Blob }) => void | Promise<void>) | null = null;
   onclose: ((event: unknown) => void) | null = null;
   onerror: ((event: unknown) => void) | null = null;
 
@@ -33,6 +33,13 @@ class MockWebSocket {
       this.onclose({});
     }
   });
+
+  private messageQueue: Promise<unknown> = Promise.resolve();
+
+  receive(data: string): Promise<unknown> {
+    this.messageQueue = this.messageQueue.then(() => this.onmessage?.({ data }));
+    return this.messageQueue;
+  }
 
   static instances: MockWebSocket[] = [];
 
@@ -292,6 +299,69 @@ describe("TunnelClient", () => {
       globalThis.fetch = originalFetch;
     }
   });
+  test("responds to pings while a slow proxy request is in flight", async () => {
+    jest.useFakeTimers();
+    const originalFetch = globalThis.fetch;
+    let capturedSignal: AbortSignal | undefined;
+    let resolveFetch: ((response: Response) => void) | undefined;
+
+    try {
+      globalThis.fetch = ((_url: string, init?: RequestInit) => {
+        capturedSignal = init?.signal as AbortSignal;
+        return new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        });
+      }) as typeof globalThis.fetch;
+
+      const ws = setupConnectedClient();
+      ws.send.mock?.calls?.splice(0);
+
+      void ws.receive(JSON.stringify({
+        type: "request",
+        requestId: "req-slow",
+        method: "GET",
+        path: "/slow-compile",
+        headers: {},
+        body: "",
+      }));
+      await Promise.resolve();
+
+      expect(capturedSignal).toBeDefined();
+      expect(capturedSignal!.aborted).toBe(false);
+
+      const pingPromise = ws.receive(JSON.stringify({ type: "ping" }));
+      // Three microtask flushes are required to unwind the MockWebSocket.receive
+      // queue (which chains via .then on the previous handler's returned promise)
+      // and let the ping handler run while the slow request is still in flight.
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      const pongsBeforeResponse = ws.send.mock.calls.filter((call: string[]) => {
+        try {
+          return JSON.parse(call[0]).type === "pong";
+        } catch {
+          return false;
+        }
+      });
+      expect(pongsBeforeResponse.length).toBeGreaterThan(0);
+      expect(ws.close).not.toHaveBeenCalled();
+      expect(capturedSignal!.aborted).toBe(false);
+      resolveFetch!(new Response("compiled", { status: 200 }));
+      await pingPromise;
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      const responseEndCall = ws.send.mock.calls.find((call: string[]) => {
+        try {
+          const parsed = JSON.parse(call[0]);
+          return parsed.type === "response_end" && parsed.requestId === "req-slow";
+        } catch {
+          return false;
+        }
+      });
+      expect(responseEndCall).toBeDefined();
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 
   test("streams response parts via response_head/data/end messages", async () => {
     const originalFetch = globalThis.fetch;
@@ -306,8 +376,9 @@ describe("TunnelClient", () => {
       const ws = setupConnectedClient();
       ws.send.mock?.calls?.splice(0);
 
-      // Await the onmessage handler so the async generator completes fully
-      await ws.onmessage?.({ data: JSON.stringify({
+      // Trigger the request and let the (now non-blocking) onmessage dispatch
+      // handleRequest; flush microtasks so the async generator yields complete.
+      void ws.onmessage?.({ data: JSON.stringify({
         type: "request",
         requestId: "req-stream",
         method: "GET",
@@ -315,9 +386,9 @@ describe("TunnelClient", () => {
         headers: {},
         body: "",
       }) });
+      for (let i = 0; i < 20; i++) await Promise.resolve();
       const sentCalls = ws.send.mock?.calls ?? [];
       const msgs = sentCalls.map((call: string[]) => JSON.parse(call[0] ?? "{}"));
-
       const headMsg = msgs.find((m: any) => m.type === "response_head");
       expect(headMsg).toBeDefined();
       expect(headMsg!.requestId).toBe("req-stream");

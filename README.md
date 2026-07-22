@@ -74,9 +74,9 @@ export BASE_DOMAIN="tunnel.example.com"
    local-to-pub --upgrade
    ```
 
-> **Tip:** If your local server takes a long time to compile (e.g. Next.js cold start), set
-> `TUNNEL_LOCAL_REQUEST_TIMEOUT_MS=600000` (default 300000 ms) before starting. Keep the server-side
-> `TUNNEL_REQUEST_TIMEOUT_MS` at least 5 s higher. See `docs/CLIENT.md` for details.
+> **Tip:** The default local request timeout is 20 minutes for slow dev compiles after sleep/resume. If you override
+> `TUNNEL_LOCAL_REQUEST_TIMEOUT_MS`, keep the server-side `TUNNEL_REQUEST_TIMEOUT_MS` at least 5s higher. See
+> `docs/CLIENT.md` for details.
 
 ## Admin Panel
 
@@ -116,7 +116,7 @@ bun run build:server
 | `ADMIN_PASSWORD` | Admin password | (required) |
 | `ADMIN_SESSION_SECRET` | Session signing | (required) |
 | `ALLOW_CUSTOM_SUBDOMAINS` | Allow clients to request specific URIs | `true` |
-| `TUNNEL_REQUEST_TIMEOUT_MS` | Server tunnel timeout (≥ client + 5s) | `305000` |
+| `TUNNEL_REQUEST_TIMEOUT_MS` | Server tunnel timeout (≥ client + 5s) | `1205000` |
 
 ## CLI Options
 
